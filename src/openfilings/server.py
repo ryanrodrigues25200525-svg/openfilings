@@ -12,8 +12,8 @@ from openfilings.service import OpenFilingsService
 mcp = FastMCP(
     "OpenFilings",
     instructions=(
-        "Search UK companies and listed issuers, list Companies House and FCA NSM "
-        "filings, and retrieve documents as Markdown. All tools are read-only."
+        "Search UK and Japanese companies, list Companies House, FCA NSM, and "
+        "EDINET filings, and retrieve documents as Markdown. All tools are read-only."
     ),
 )
 
@@ -22,7 +22,7 @@ mcp = FastMCP(
 async def companies_search(
     query: str, limit: int = 10, source: str = "all"
 ) -> list[dict[str, Any]]:
-    """Search UK companies by name and return stable OpenFilings company IDs."""
+    """Search UK/Japan companies and return stable OpenFilings company IDs."""
 
     async with OpenFilingsService.from_settings() as service:
         companies = await service.search_companies(query, limit=limit, source=source)
@@ -35,12 +35,17 @@ async def filings_list(
     category: str | None = "accounts",
     limit: int = 25,
     source: str = "all",
+    history_days: int = 120,
 ) -> list[dict[str, Any]]:
-    """List normalized Companies House and/or FCA NSM filings for a UK issuer."""
+    """List normalized filings; history_days controls the EDINET lookback."""
 
     async with OpenFilingsService.from_settings() as service:
         filings = await service.list_filings(
-            company_id, category=category, limit=limit, source=source
+            company_id,
+            category=category,
+            limit=limit,
+            source=source,
+            edinet_lookback_days=history_days,
         )
     return [filing.model_dump(mode="json") for filing in filings]
 
@@ -91,7 +96,7 @@ async def filing_financials(
     filing_id: str,
     refresh: bool = False,
 ) -> dict[str, Any]:
-    """Extract normalized statements from UK or ESEF Inline XBRL."""
+    """Extract normalized statements from UK, ESEF, or EDINET Inline XBRL."""
 
     async with OpenFilingsService.from_settings() as service:
         financials = await service.get_filing_financials(

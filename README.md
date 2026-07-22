@@ -1,12 +1,14 @@
 # OpenFilings
 
-OpenFilings is a lightweight, local-first tool for searching UK companies and
-listed issuers, listing official filings, and converting source documents into
+OpenFilings is a lightweight, local-first tool for searching UK and Japanese
+companies, listing official filings, and converting source documents into
 Markdown for LLMs.
 
 ## What works
 
 - Search Companies House and the FCA National Storage Mechanism (NSM)
+- Search Japanese filers by name, ticker, or EDINET code
+- List EDINET annual, semiannual, quarterly, and current reports
 - Resolve listed-company names to legal entity identifiers (LEIs)
 - Merge matching Companies House and FCA identities
 - List statutory filings and regulated disclosures in one timeline
@@ -15,15 +17,16 @@ Markdown for LLMs.
 - Convert documents locally to Markdown without retaining the originals
 - Navigate extracted documents by heading and search within sections
 - Extract standardized income, balance-sheet, cash-flow, and comprehensive
-  income statements from UK-GAAP and ESEF/IFRS Inline XBRL
+  income statements from UK-GAAP, ESEF/IFRS, and EDINET Inline XBRL
 - Score extraction quality with explainable warnings
 - Optionally route scanned PDFs through page-at-a-time Tesseract OCR
 - Reuse compressed Markdown and duplicate content through a SQLite cache
 - Enforce a logical cache limit and reclaim space with a cleanup command
 - Use the same operations from the CLI or an MCP server
 
-The FCA-only path is free and needs no API key. Companies House also provides a
-free API, but requires you to create an API key.
+All three official data sources are free. FCA access and EDINET company search
+need no key. Companies House and EDINET filing retrieval require free API-key
+registration.
 
 ## Setup
 
@@ -31,14 +34,19 @@ free API, but requires you to create an API key.
 uv sync
 ```
 
-To include Companies House, expose its API key:
+Expose the keys for the sources you want to use:
 
 ```bash
 export COMPANIES_HOUSE_API_KEY="your-key"
+export EDINET_API_KEY="your-key"
 ```
 
 Never commit the key. `.env` is ignored, but OpenFilings intentionally does not
 load dotenv files implicitly.
+
+Register through the [Companies House developer
+site](https://developer.company-information.service.gov.uk/) and the [EDINET
+API registration page](https://api.edinet-fsa.go.jp/api/auth/index.aspx?mode=1).
 
 ## CLI
 
@@ -57,15 +65,26 @@ defaults to `auto`: it runs only when native PDF extraction is unusable and a
 system Tesseract executable is available. Override it per request with
 `--ocr never` or `--ocr always`.
 
-With a Companies House key, the default `all` source searches both systems,
-merges matching names, and remembers the LEI for later combined listing:
+With a Companies House key, the default `all` source searches all configured
+markets, merges matching UK names, and remembers the LEI for combined listing:
 
 ```bash
 uv run openfilings search "Tesco"
 uv run openfilings filings uk_00445790 --limit 50
 ```
 
-Available source values are `all`, `companies-house`, and `fca-nsm`. Use
+Japanese company search works without a key. Filing history and download use
+EDINET API v2 and require `EDINET_API_KEY`:
+
+```bash
+uv run openfilings search "Sony" --source edinet
+uv run openfilings filings jp_E01777 --source edinet --history-days 120
+uv run openfilings fetch jp_edinet_S1000001 -o sony-report.md
+uv run openfilings financials jp_edinet_S1000001 -o sony-financials.json
+```
+
+Use the real filing ID returned by `filings` in the last two commands. Available
+source values are `all`, `companies-house`, `fca-nsm`, and `edinet`. Use
 `--output report.md` with `fetch` to save Markdown. Set
 `OPENFILINGS_DATA_DIR` to move the SQLite cache; it defaults to `.openfilings`
 in the current directory.
@@ -101,6 +120,10 @@ async with OpenFilingsService.from_settings() as service:
     annual_report = filings.filter(filing_type="ACS").latest()
     document = await service.get_filing_document(annual_report.id)
     financials = await service.get_filing_financials(annual_report.id)
+
+    japan = await service.filings(
+        "jp_E01777", source="edinet", edinet_lookback_days=120
+    )
 ```
 
 `Filings` supports `filter`, `latest`, and `head`. `FilingDocument` exposes
@@ -110,7 +133,7 @@ their source concept, period, unit, decimals, and dimensions.
 ## MCP tools
 
 - `companies_search(query, limit=10, source="all")`
-- `filings_list(company_id, category="accounts", limit=25, source="all")`
+- `filings_list(company_id, category="accounts", limit=25, source="all", history_days=120)`
 - `filing_markdown(filing_id, refresh=False, ocr_mode=None)`
 - `filing_sections(filing_id, query=None, limit=20)`
 - `filing_financials(filing_id, refresh=False)`
@@ -127,6 +150,10 @@ financials are compressed. Inline XBRL is processed with a bounded streaming
 parser, avoiding a full DOM for large annual reports. Tesseract is an optional
 system executable and adds nothing to the Python environment when it is not
 installed.
+
+EDINET issuer search downloads a roughly 0.6 MB compressed code list. Filing
+ZIPs are capped at 150 MB and discarded after conversion; the default Japanese
+history window makes 120 small metadata requests and is reused for six hours.
 
 On Tesco's 2026 FCA ESEF filing (29.5 MB Inline XBRL), the structured parser ran
 in about 0.63 seconds with approximately 150 MB peak resident memory on the
@@ -148,6 +175,12 @@ The FCA connector uses the same public read-only search endpoint as the NSM web
 application. The endpoint is not published as a separately versioned consumer
 API, so its alias and response schema are isolated in the FCA adapter. Requests
 are user-triggered, bounded, and do not crawl in the background.
+
+The Japan connector uses the official [EDINET API v2
+specification](https://disclosure2dl.edinet-fsa.go.jp/guide/static/disclosure/download/ESE140206.pdf)
+and [issuer-code
+archive](https://disclosure2dl.edinet-fsa.go.jp/searchdocument/codelist/Edinetcode.zip).
+It sends a subscription key only as an API parameter and never persists it.
 
 NSM materials remain subject to the FCA's terms and the rights attached to each
 filed document. PyMuPDF4LLM and PyMuPDF are AGPL-3.0 licensed; review their

@@ -85,6 +85,54 @@ class SQLiteCache:
         ).fetchone()
         return Filing.model_validate_json(row[0]) if row else None
 
+    def list_filings(
+        self,
+        company_id: str,
+        *,
+        source: str | None = None,
+        category: str | None = None,
+        limit: int = 500,
+    ) -> list[Filing]:
+        rows = self._connection.execute(
+            "SELECT payload FROM filings WHERE company_id = ?",
+            (company_id,),
+        ).fetchall()
+        filings = [Filing.model_validate_json(row[0]) for row in rows]
+        if source is not None:
+            filings = [filing for filing in filings if filing.source == source]
+        if category is not None:
+            filings = [filing for filing in filings if filing.category == category]
+        filings.sort(
+            key=lambda filing: (
+                filing.published_at.date()
+                if filing.published_at
+                else filing.filing_date,
+                filing.published_at.isoformat() if filing.published_at else "",
+                filing.id,
+            ),
+            reverse=True,
+        )
+        return filings[: max(0, limit)]
+
+    def get_market_state(self, key: str) -> str | None:
+        row = self._connection.execute(
+            "SELECT value FROM market_state WHERE key = ?", (key,)
+        ).fetchone()
+        return str(row[0]) if row else None
+
+    def put_market_state(self, key: str, value: str) -> None:
+        with self._connection:
+            self._connection.execute(
+                """
+                INSERT INTO market_state (key, value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    value = excluded.value,
+                    updated_at = excluded.updated_at
+                """,
+                (key, value, _utc_now_iso()),
+            )
+
     def put_content(self, content: FilingContent) -> None:
         compressed = zlib.compress(content.markdown.encode("utf-8"), level=6)
         with self._connection:
@@ -311,6 +359,12 @@ class SQLiteCache:
 
                 CREATE INDEX IF NOT EXISTS filings_company_id_idx
                     ON filings(company_id);
+
+                CREATE TABLE IF NOT EXISTS market_state (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
 
                 CREATE TABLE IF NOT EXISTS filing_content (
                     filing_id TEXT PRIMARY KEY,

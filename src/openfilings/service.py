@@ -6,11 +6,12 @@ import asyncio
 import hashlib
 import re
 from collections.abc import Callable, Coroutine
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, NoReturn, TypeVar, cast
 
 from openfilings.adapters.base import SourceDocument
 from openfilings.adapters.companies_house import CompaniesHouseClient
+from openfilings.adapters.edinet import EdinetClient
 from openfilings.adapters.fca_nsm import FcaNsmClient
 from openfilings.config import Settings
 from openfilings.domain import FilingDocument, Filings
@@ -36,7 +37,7 @@ from openfilings.models import (
 from openfilings.storage.sqlite import SQLiteCache
 from openfilings.xbrl import extract_filing_financials
 
-SourceSelection = Literal["all", "companies_house", "fca_nsm"]
+SourceSelection = Literal["all", "companies_house", "fca_nsm", "edinet"]
 _Result = TypeVar("_Result")
 
 
@@ -49,6 +50,7 @@ class OpenFilingsService:
         cache: SQLiteCache,
         *,
         nsm_source: FcaNsmClient | None = None,
+        edinet_source: EdinetClient | None = None,
         converter: Callable[[bytes], str] = pdf_to_markdown,
         html_converter: Callable[[bytes], str] = html_to_markdown,
         ocr_converter: OcrConverter = ocr_pdf_to_markdown,
@@ -63,6 +65,7 @@ class OpenFilingsService:
     ) -> None:
         self._companies_house = source
         self._nsm = nsm_source
+        self._edinet = edinet_source
         self._cache = cache
         self._pdf_converter = converter
         self._html_converter = html_converter
@@ -90,11 +93,17 @@ class OpenFilingsService:
             timeout_seconds=settings.request_timeout_seconds,
             max_retries=settings.max_retries,
         )
+        edinet = EdinetClient(
+            settings.edinet_api_key,
+            timeout_seconds=settings.request_timeout_seconds,
+            max_retries=settings.max_retries,
+        )
         cache = SQLiteCache(settings.database_path)
         return cls(
             companies_house,
             cache,
             nsm_source=nsm,
+            edinet_source=edinet,
             ocr_mode=settings.ocr_mode,
             ocr_language=settings.ocr_language,
             ocr_dpi=settings.ocr_dpi,
@@ -117,6 +126,8 @@ class OpenFilingsService:
             await self._companies_house.aclose()
         if self._nsm is not None:
             await self._nsm.aclose()
+        if self._edinet is not None:
+            await self._edinet.aclose()
         self._cache.close()
 
     async def search_companies(
@@ -140,6 +151,12 @@ class OpenFilingsService:
                     raise ConfigurationError("The FCA NSM source is not configured.")
             else:
                 calls.append(self._nsm.search_issuers(query, limit=limit))
+        if selection in {"all", "edinet"}:
+            if self._edinet is None:
+                if selection == "edinet":
+                    raise ConfigurationError("The EDINET source is not configured.")
+            else:
+                calls.append(self._edinet.search_companies(query, limit=limit))
 
         results = await self._gather_available(calls)
         companies = self._merge_companies(
@@ -156,12 +173,15 @@ class OpenFilingsService:
         limit: int = 25,
         source: SourceSelection = "all",
         nsm_type_codes: list[str] | None = None,
+        edinet_lookback_days: int = 120,
     ) -> list[Filing]:
         selection = self._validate_source(source)
         calls: list[Coroutine[Any, Any, list[Filing]]] = []
 
-        if selection in {"all", "companies_house"} and not self._is_nsm_company_id(
-            company_id
+        if (
+            selection in {"all", "companies_house"}
+            and not self._is_nsm_company_id(company_id)
+            and not self._is_edinet_company_id(company_id)
         ):
             if self._companies_house is None:
                 if selection == "companies_house":
@@ -197,6 +217,22 @@ class OpenFilingsService:
                     "an ID shaped like uk_lei_{LEI}."
                 )
 
+        if selection in {"all", "edinet"} and self._is_edinet_company_id(company_id):
+            if self._edinet is None:
+                raise ConfigurationError("The EDINET source is not configured.")
+            calls.append(
+                self._list_edinet_filings(
+                    company_id,
+                    category=category,
+                    limit=limit,
+                    lookback_days=edinet_lookback_days,
+                )
+            )
+        elif selection == "edinet":
+            raise ConfigurationError(
+                "Expected a Japanese company ID shaped like jp_E12345."
+            )
+
         results = await self._gather_available(calls)
         combined = [filing for result in results for filing in result]
         if not self._is_nsm_company_id(company_id):
@@ -226,6 +262,7 @@ class OpenFilingsService:
         limit: int = 25,
         source: SourceSelection = "all",
         nsm_type_codes: list[str] | None = None,
+        edinet_lookback_days: int = 120,
     ) -> Filings:
         """Return an immutable, filterable filing collection."""
 
@@ -235,6 +272,7 @@ class OpenFilingsService:
             limit=limit,
             source=source,
             nsm_type_codes=nsm_type_codes,
+            edinet_lookback_days=edinet_lookback_days,
         )
         return Filings(items)
 
@@ -386,6 +424,11 @@ class OpenFilingsService:
         )
 
     async def _resolve_filing(self, filing_id: str) -> Filing:
+        if filing_id.casefold().startswith("jp_edinet_"):
+            raise FilingNotFoundError(
+                "EDINET filing metadata is not cached. List the Japanese company's "
+                "filings before fetching the document."
+            )
         if filing_id.lower().startswith("uk_nsm_"):
             if self._nsm is None:
                 raise ConfigurationError("The FCA NSM source is not configured.")
@@ -404,6 +447,10 @@ class OpenFilingsService:
         return await self._companies_house.get_filing(company_number, transaction_id)
 
     async def _download_document(self, filing: Filing) -> SourceDocument:
+        if filing.source == "edinet":
+            if self._edinet is None:
+                raise ConfigurationError("The EDINET source is not configured.")
+            return await self._edinet.download_document(filing.document_id or "")
         if filing.source == "fca_nsm":
             if self._nsm is None:
                 raise ConfigurationError("The FCA NSM source is not configured.")
@@ -411,6 +458,44 @@ class OpenFilingsService:
         if self._companies_house is None:
             self._raise_missing_companies_house_key()
         return await self._companies_house.download_document(filing.document_id or "")
+
+    async def _list_edinet_filings(
+        self,
+        company_id: str,
+        *,
+        category: str | None,
+        limit: int,
+        lookback_days: int,
+    ) -> list[Filing]:
+        if self._edinet is None:
+            raise ConfigurationError("The EDINET source is not configured.")
+        if not 1 <= lookback_days <= 3_661:
+            raise ConfigurationError("EDINET history days must be between 1 and 3661.")
+        code = self._edinet.normalize_edinet_code(company_id)
+        state_key = f"edinet-history:{code}:{category or 'all'}:{lookback_days}:{limit}"
+        state = self._cache.get_market_state(state_key)
+        if state:
+            try:
+                cached_at = datetime.fromisoformat(state)
+            except ValueError:
+                cached_at = datetime.min.replace(tzinfo=UTC)
+            if datetime.now(UTC) - cached_at < timedelta(hours=6):
+                return self._cache.list_filings(
+                    company_id,
+                    source="edinet",
+                    category=category,
+                    limit=limit,
+                )
+
+        filings = await self._edinet.list_filings(
+            code,
+            category=category,
+            limit=limit,
+            lookback_days=lookback_days,
+        )
+        self._cache.put_filings(filings)
+        self._cache.put_market_state(state_key, datetime.now(UTC).isoformat())
+        return filings
 
     def _nsm_identifier(self, company_id: str) -> str | None:
         if company_id.lower().startswith("uk_lei_"):
@@ -454,7 +539,7 @@ class OpenFilingsService:
         merged: dict[str, Company] = {}
         order: list[str] = []
         for company in companies:
-            key = cls._company_key(company.name)
+            key = cls._company_key(company.market, company.name)
             existing = merged.get(key)
             if existing is None:
                 merged[key] = company
@@ -488,13 +573,19 @@ class OpenFilingsService:
         return unique
 
     @classmethod
-    def _company_key(cls, name: str) -> str:
+    def _company_key(cls, market: str, name: str) -> str:
+        if market == "JP":
+            normalized = "".join(
+                character for character in name.casefold() if character.isalnum()
+            )
+            return f"jp:{normalized}"
         normalized = cls._normalize_text(name)
         suffixes = (" public limited company", " limited", " ltd", " plc")
         for suffix in suffixes:
             if normalized.endswith(suffix):
-                return normalized[: -len(suffix)].strip()
-        return normalized
+                normalized = normalized[: -len(suffix)].strip()
+                break
+        return f"{market.casefold()}:{normalized}"
 
     @staticmethod
     def _normalize_text(value: str) -> str:
@@ -507,9 +598,9 @@ class OpenFilingsService:
     @staticmethod
     def _validate_source(source: str) -> SourceSelection:
         normalized = source.strip().casefold().replace("-", "_")
-        if normalized not in {"all", "companies_house", "fca_nsm"}:
+        if normalized not in {"all", "companies_house", "fca_nsm", "edinet"}:
             raise ConfigurationError(
-                "Source must be one of: all, companies_house, fca_nsm."
+                "Source must be one of: all, companies_house, fca_nsm, edinet."
             )
         return cast(SourceSelection, normalized)
 
@@ -517,6 +608,10 @@ class OpenFilingsService:
     def _is_nsm_company_id(company_id: str) -> bool:
         lowered = company_id.lower()
         return lowered.startswith(("uk_lei_", "uk_nsm_issuer_"))
+
+    @staticmethod
+    def _is_edinet_company_id(company_id: str) -> bool:
+        return company_id.casefold().startswith("jp_e")
 
     @staticmethod
     def _parse_companies_house_filing_id(filing_id: str) -> tuple[str, str]:

@@ -8,7 +8,10 @@ from datetime import date
 
 from openfilings.adapters.base import SourceDocument
 from openfilings.exceptions import FinancialsUnavailableError
-from openfilings.extraction.document import main_html_from_zip
+from openfilings.extraction.document import (
+    html_documents_from_zip,
+    main_html_from_zip,
+)
 from openfilings.models import (
     Filing,
     FilingFinancials,
@@ -33,21 +36,29 @@ _STATEMENT_TITLES: dict[StatementType, str] = {
     "comprehensive_income": "Statement of comprehensive income",
     "changes_in_equity": "Statement of changes in equity",
 }
-_STANDARD_PREFIXES = {"ifrs-full", "uk-gaap", "uk-core", "frs-102"}
+_STANDARD_PREFIXES = {
+    "ifrs-full",
+    "uk-gaap",
+    "uk-core",
+    "frs-102",
+    "jppfs_cor",
+    "jpcrp_cor",
+}
 
 
 def extract_filing_financials(
     document: SourceDocument,
     filing: Filing,
 ) -> FilingFinancials:
-    """Extract standardized statements from one tagged UK filing document."""
+    """Extract standardized statements from one tagged filing document."""
 
-    report = _inline_report(document)
+    report = _inline_report(document, filing)
     parsed = parse_inline_xbrl(report)
     statements = _build_statements(parsed)
     if not statements:
         raise FinancialsUnavailableError(
-            "The tagged filing contains no supported UK-GAAP or IFRS statement facts."
+            "The tagged filing contains no supported UK-GAAP, JP-GAAP, or IFRS "
+            "statement facts."
         )
     return FilingFinancials(
         filing_id=filing.id,
@@ -62,9 +73,12 @@ def extract_filing_financials(
     )
 
 
-def _inline_report(document: SourceDocument) -> bytes:
+def _inline_report(document: SourceDocument, filing: Filing) -> bytes:
     media_type = document.media_type.casefold()
     if media_type in _ZIP_TYPES or document.data.startswith(b"PK\x03\x04"):
+        if filing.source == "edinet" or document.profile == "edinet":
+            reports = html_documents_from_zip(document.data, public_documents_only=True)
+            return b"\n".join(reports)
         return main_html_from_zip(document.data)
     if media_type in _HTML_TYPES or _looks_like_html(document.data):
         return document.data

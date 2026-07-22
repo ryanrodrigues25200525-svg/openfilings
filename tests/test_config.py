@@ -15,6 +15,7 @@ def test_ocr_and_cache_settings_are_loaded_from_environment(
     monkeypatch.setenv("OPENFILINGS_OCR_DPI", "300")
     monkeypatch.setenv("OPENFILINGS_OCR_MAX_PAGES", "80")
     monkeypatch.setenv("OPENFILINGS_CACHE_MAX_MB", "256")
+    monkeypatch.setenv("EDINET_API_KEY", "edinet-test-key")
 
     settings = Settings.from_env()
 
@@ -23,6 +24,7 @@ def test_ocr_and_cache_settings_are_loaded_from_environment(
     assert settings.ocr_dpi == 300
     assert settings.ocr_max_pages == 80
     assert settings.cache_max_mb == 256
+    assert settings.edinet_api_key == "edinet-test-key"
 
 
 def test_invalid_ocr_mode_is_rejected(monkeypatch) -> None:

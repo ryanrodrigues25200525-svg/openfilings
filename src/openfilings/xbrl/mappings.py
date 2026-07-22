@@ -32,6 +32,9 @@ LINE_ITEMS = (
             "RevenueFromSaleOfGoodsAndServices",
             "SalesRevenue",
             "SalesRevenueNet",
+            "NetSales",
+            "OperatingRevenue1",
+            "OperatingRevenue",
         ),
     ),
     LineItemDefinition(
@@ -54,6 +57,7 @@ LINE_ITEMS = (
             "ProfitLossFromOperatingActivities",
             "OperatingProfitLoss",
             "OperatingProfit",
+            "OperatingIncomeLoss",
         ),
     ),
     LineItemDefinition(
@@ -76,6 +80,8 @@ LINE_ITEMS = (
             "ProfitLossBeforeTax",
             "ProfitLossOnOrdinaryActivitiesBeforeTax",
             "ProfitBeforeTax",
+            "IncomeBeforeIncomeTaxes",
+            "OrdinaryIncomeLoss",
         ),
     ),
     LineItemDefinition(
@@ -97,6 +103,8 @@ LINE_ITEMS = (
             "ProfitLossForPeriod",
             "ProfitLossForFinancialYear",
             "ProfitLossOnOrdinaryActivitiesAfterTax",
+            "ProfitLossAttributableToOwnersOfParent",
+            "ProfitLossAttributableToOwnersOfParentSummaryOfBusinessResults",
         ),
     ),
     LineItemDefinition(
@@ -129,19 +137,26 @@ LINE_ITEMS = (
             "CashAndCashEquivalents",
             "CashAndCashEquivalentsAtCarryingValue",
             "CashBankOnHand",
+            "CashAndDeposits",
         ),
     ),
     LineItemDefinition(
         "trade_receivables",
         "Trade and other receivables",
         "balance_sheet",
-        ("TradeAndOtherCurrentReceivables", "Debtors", "TradeReceivables"),
+        (
+            "TradeAndOtherCurrentReceivables",
+            "Debtors",
+            "TradeReceivables",
+            "NotesAndAccountsReceivableTrade",
+            "NotesAccountsReceivableTradeAndContractAssets",
+        ),
     ),
     LineItemDefinition(
         "inventory",
         "Inventories",
         "balance_sheet",
-        ("Inventories", "Stocks", "Inventory"),
+        ("Inventories", "Stocks", "Inventory", "MerchandiseAndFinishedGoods"),
     ),
     LineItemDefinition(
         "property_plant_equipment",
@@ -151,6 +166,7 @@ LINE_ITEMS = (
             "PropertyPlantAndEquipment",
             "PropertyPlantAndEquipmentCarryingAmount",
             "TangibleFixedAssets",
+            "PropertyPlantAndEquipmentNet",
         ),
     ),
     LineItemDefinition(
@@ -214,6 +230,8 @@ LINE_ITEMS = (
             "TotalEquity",
             "EquityAttributableToOwnersOfParent",
             "ShareholdersFunds",
+            "NetAssets",
+            "ShareholdersEquity",
         ),
     ),
     LineItemDefinition(
@@ -224,6 +242,7 @@ LINE_ITEMS = (
             "CashFlowsFromUsedInOperatingActivities",
             "NetCashFlowsFromUsedInOperatingActivities",
             "NetCashFlowFromOperatingActivities",
+            "NetCashProvidedByUsedInOperatingActivities",
         ),
     ),
     LineItemDefinition(
@@ -234,6 +253,7 @@ LINE_ITEMS = (
             "CashFlowsFromUsedInInvestingActivities",
             "NetCashFlowsFromUsedInInvestingActivities",
             "NetCashFlowFromInvestingActivities",
+            "NetCashProvidedByUsedInInvestingActivities",
         ),
     ),
     LineItemDefinition(
@@ -244,6 +264,7 @@ LINE_ITEMS = (
             "CashFlowsFromUsedInFinancingActivities",
             "NetCashFlowsFromUsedInFinancingActivities",
             "NetCashFlowFromFinancingActivities",
+            "NetCashProvidedByUsedInFinancingActivities",
         ),
     ),
     LineItemDefinition(
@@ -254,6 +275,7 @@ LINE_ITEMS = (
             "PurchaseOfPropertyPlantAndEquipment",
             "PaymentsToAcquirePropertyPlantAndEquipment",
             "PurchaseOfTangibleFixedAssets",
+            "PurchaseOfPropertyPlantAndEquipmentAndIntangibleAssets",
         ),
     ),
     LineItemDefinition(

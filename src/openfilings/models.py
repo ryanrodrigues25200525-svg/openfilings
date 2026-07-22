@@ -13,7 +13,7 @@ class DomainModel(BaseModel):
     model_config = ConfigDict(extra="ignore", frozen=True)
 
 
-SourceName = Literal["companies_house", "fca_nsm"]
+SourceName = Literal["companies_house", "fca_nsm", "edinet"]
 QualityStatus = Literal["good", "degraded", "unusable"]
 OcrMode = Literal["auto", "never", "always"]
 StatementType = Literal[
@@ -47,8 +47,11 @@ class Company(DomainModel):
     name: str
     sources: tuple[SourceName, ...] = ("companies_house",)
     lei: str | None = None
-    market: Literal["UK"] = "UK"
-    country_code: Literal["GB"] = "GB"
+    market: Literal["UK", "JP"] = "UK"
+    country_code: Literal["GB", "JP"] = "GB"
+    ticker: str | None = None
+    local_code: str | None = None
+    english_name: str | None = None
     status: str | None = None
     company_type: str | None = None
     address: str | None = None
@@ -65,6 +68,8 @@ class Filing(DomainModel):
     filing_type: str
     filing_date: date
     published_at: datetime | None = None
+    period_start: date | None = None
+    period_end: date | None = None
     description: str | None = None
     pages: int | None = None
     document_id: str | None = None
@@ -73,6 +78,10 @@ class Filing(DomainModel):
     issuer_name: str | None = None
     issuer_lei: str | None = None
     related_issuers: tuple[IssuerReference, ...] = ()
+    language: str = "en"
+    xbrl_available: bool = False
+    pdf_available: bool = False
+    csv_available: bool = False
     source_url: str
 
     @property

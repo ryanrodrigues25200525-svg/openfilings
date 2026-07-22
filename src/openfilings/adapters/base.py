@@ -12,3 +12,4 @@ class SourceDocument:
     data: bytes
     media_type: str
     source_url: str
+    profile: str | None = None

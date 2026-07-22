@@ -1,4 +1,4 @@
-"""Command-line interface for the UK filing vertical slice."""
+"""Command-line interface for UK and Japanese filings."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from openfilings.service import OpenFilingsService
 app = typer.Typer(
     name="openfilings",
     no_args_is_help=True,
-    help="Search UK filings and convert Companies House/FCA documents to Markdown.",
+    help="Search UK/Japan filings and convert official documents to Markdown.",
 )
 cache_app = typer.Typer(no_args_is_help=True, help="Inspect or prune the local cache.")
 app.add_typer(cache_app, name="cache")
@@ -33,6 +33,7 @@ class SourceOption(StrEnum):
     all = "all"
     companies_house = "companies-house"
     fca_nsm = "fca-nsm"
+    edinet = "edinet"
 
 
 class OcrOption(StrEnum):
@@ -61,7 +62,7 @@ def search(
         SourceOption.all
     ),
 ) -> None:
-    """Search UK companies and listed issuers, resolving LEIs when available."""
+    """Search UK and Japanese companies through official filing sources."""
 
     async def run() -> None:
         async with OpenFilingsService.from_settings() as service:
@@ -73,7 +74,8 @@ def search(
             return
         for company in companies:
             typer.echo(
-                f"{company.id}\t{company.name}\t{company.lei or '-'}\t"
+                f"{company.id}\t{company.market}\t{company.name}\t"
+                f"{company.ticker or company.lei or '-'}\t"
                 f"{','.join(company.sources)}\t{company.status or '-'}\t"
                 f"{company.address or '-'}"
             )
@@ -94,13 +96,25 @@ def filings(
     source: Annotated[SourceOption, typer.Option(help="Filing source to include.")] = (
         SourceOption.all
     ),
+    history_days: Annotated[
+        int,
+        typer.Option(
+            min=1,
+            max=3661,
+            help="EDINET lookback window; defaults to 120 days.",
+        ),
+    ] = 120,
 ) -> None:
     """List a company's filings, newest first."""
 
     async def run() -> None:
         async with OpenFilingsService.from_settings() as service:
             results = await service.list_filings(
-                company_id, category=category or None, limit=limit, source=source.value
+                company_id,
+                category=category or None,
+                limit=limit,
+                source=source.value,
+                edinet_lookback_days=history_days,
             )
         if not results:
             typer.echo("No filings found.")
@@ -173,7 +187,7 @@ def financials(
         bool, typer.Option(help="Ignore locally cached structured financials.")
     ] = False,
 ) -> None:
-    """Extract normalized statements from UK or ESEF Inline XBRL."""
+    """Extract normalized statements from UK, ESEF, or EDINET Inline XBRL."""
 
     async def run() -> None:
         async with OpenFilingsService.from_settings() as service:

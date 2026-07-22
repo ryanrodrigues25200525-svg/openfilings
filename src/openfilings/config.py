@@ -19,6 +19,7 @@ class Settings:
     """Runtime settings with deliberately conservative resource defaults."""
 
     companies_house_api_key: str
+    edinet_api_key: str
     data_dir: Path
     request_timeout_seconds: float = 30.0
     max_retries: int = 2
@@ -50,6 +51,7 @@ class Settings:
 
         return cls(
             companies_house_api_key=api_key,
+            edinet_api_key=os.getenv("EDINET_API_KEY", "").strip(),
             data_dir=data_dir,
             ocr_mode=cast(OcrMode, ocr_mode),
             ocr_language=ocr_language,

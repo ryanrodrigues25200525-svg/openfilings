@@ -77,11 +77,18 @@ def extract_document(
             quality=assess_markdown(markdown),
         )
     if media_type in _ZIP_TYPES or document.data.startswith(b"PK\x03\x04"):
-        html = main_html_from_zip(document.data)
-        markdown = html_converter(html)
+        if document.profile == "edinet":
+            reports = html_documents_from_zip(document.data, public_documents_only=True)
+            parts = [html_converter(report).strip() for report in reports]
+            markdown = "\n\n---\n\n".join(part for part in parts if part)
+            method = "edinet-zip-html+markdownify"
+        else:
+            html = main_html_from_zip(document.data)
+            markdown = html_converter(html)
+            method = "zip-html+markdownify"
         return ExtractionResult(
             markdown=markdown,
-            method="zip-html+markdownify",
+            method=method,
             quality=assess_markdown(markdown),
         )
     raise ExtractionError(f"Unsupported filing media type: {document.media_type}.")
@@ -203,6 +210,15 @@ def _pdf_page_count(pdf_bytes: bytes) -> int | None:
 
 def main_html_from_zip(archive_bytes: bytes) -> bytes:
     """Return the largest XHTML/HTML report from a bounded filing archive."""
+    reports = html_documents_from_zip(archive_bytes)
+    return max(reports, key=len)
+
+
+def html_documents_from_zip(
+    archive_bytes: bytes, *, public_documents_only: bool = False
+) -> tuple[bytes, ...]:
+    """Return ordered, bounded HTML documents from a filing archive."""
+
     try:
         with zipfile.ZipFile(io.BytesIO(archive_bytes)) as archive:
             members = [member for member in archive.infolist() if not member.is_dir()]
@@ -216,10 +232,22 @@ def main_html_from_zip(archive_bytes: bytes) -> bytes:
                 for member in members
                 if member.filename.casefold().endswith((".xhtml", ".html", ".htm"))
             ]
+            if public_documents_only:
+                public_members = [
+                    member
+                    for member in html_members
+                    if "/xbrl/publicdoc/"
+                    in f"/{member.filename.casefold().lstrip('/')}"
+                ]
+                html_members = public_members or html_members
             if not html_members:
                 raise ExtractionError("The filing archive contains no HTML report.")
-            report = max(html_members, key=lambda member: member.file_size)
-            return archive.read(report)
+            return tuple(
+                archive.read(member)
+                for member in sorted(
+                    html_members, key=lambda item: item.filename.casefold()
+                )
+            )
     except ExtractionError:
         raise
     except (OSError, zipfile.BadZipFile) as exc:
