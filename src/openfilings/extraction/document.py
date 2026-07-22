@@ -14,12 +14,12 @@ from openfilings.extraction.html import html_to_markdown
 from openfilings.extraction.ocr import ocr_pdf_to_markdown, tesseract_available
 from openfilings.extraction.pdf import pdf_to_markdown
 from openfilings.extraction.quality import add_quality_warning, assess_markdown
+from openfilings.limits import MAX_TAGGED_DOCUMENT_BYTES
 from openfilings.models import ExtractionQuality, OcrMode
 
 _HTML_TYPES = {"text/html", "application/xhtml+xml"}
 _ZIP_TYPES = {"application/zip", "application/x-zip-compressed"}
 _MAX_ARCHIVE_FILES = 2_000
-_MAX_UNCOMPRESSED_BYTES = 150 * 1024 * 1024
 
 
 class OcrConverter(Protocol):
@@ -224,7 +224,7 @@ def html_documents_from_zip(
             members = [member for member in archive.infolist() if not member.is_dir()]
             if len(members) > _MAX_ARCHIVE_FILES:
                 raise ExtractionError("The filing archive contains too many files.")
-            if sum(member.file_size for member in members) > _MAX_UNCOMPRESSED_BYTES:
+            if sum(member.file_size for member in members) > MAX_TAGGED_DOCUMENT_BYTES:
                 raise ExtractionError("The filing archive is too large when expanded.")
 
             html_members = [

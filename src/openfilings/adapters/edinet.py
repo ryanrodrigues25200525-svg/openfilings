@@ -21,6 +21,7 @@ from openfilings.exceptions import (
     DocumentUnavailableError,
     SourceError,
 )
+from openfilings.limits import MAX_TAGGED_DOCUMENT_BYTES
 from openfilings.models import Company, Filing
 
 API_BASE_URL = "https://api.edinet-fsa.go.jp/api/v2"
@@ -34,7 +35,6 @@ _DOCUMENT_ID = re.compile(r"^S\d{7}$", re.IGNORECASE)
 _MAX_ARCHIVE_FILES = 10
 _MAX_CODE_LIST_BYTES = 5 * 1024 * 1024
 _MAX_CODE_LIST_EXPANDED_BYTES = 20 * 1024 * 1024
-_MAX_DOCUMENT_BYTES = 150 * 1024 * 1024
 _JST = ZoneInfo("Asia/Tokyo")
 
 _DOCUMENT_TYPES: dict[str, tuple[str, str]] = {
@@ -215,8 +215,8 @@ class EdinetClient:
             raise DocumentUnavailableError(self._json_error(response))
         if not response.content:
             raise DocumentUnavailableError(f"EDINET document {doc_id} was empty.")
-        if len(response.content) > _MAX_DOCUMENT_BYTES:
-            limit_mb = _MAX_DOCUMENT_BYTES // 1024 // 1024
+        if len(response.content) > MAX_TAGGED_DOCUMENT_BYTES:
+            limit_mb = MAX_TAGGED_DOCUMENT_BYTES // 1024 // 1024
             raise DocumentUnavailableError(
                 f"EDINET document exceeds the {limit_mb} MB limit."
             )

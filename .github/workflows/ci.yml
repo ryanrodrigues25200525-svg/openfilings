@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Quality gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.30"
+          python-version: "3.13"
+          enable-cache: true
+      - name: Install locked dependencies
+        run: uv sync --locked --all-extras --dev
+      - name: Lint
+        run: uv run ruff check src tests
+      - name: Verify formatting
+        run: uv run ruff format --check src tests
+      - name: Test
+        run: uv run pytest
+
+  compatibility:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.30"
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+      - name: Install locked dependencies
+        run: uv sync --locked --all-extras --dev
+      - name: Run tests
+        run: uv run pytest
+
+  package:
+    name: Build package
+    needs: [quality, compatibility]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.30"
+          python-version: "3.13"
+          enable-cache: true
+      - name: Build wheel and source distribution
+        run: uv build
+      - name: Smoke-test wheel
+        run: uv run --isolated --no-project --with dist/*.whl tests/smoke_package.py
+      - name: Smoke-test source distribution
+        run: uv run --isolated --no-project --with dist/*.tar.gz tests/smoke_package.py
+      - name: Upload distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: openfilings-distributions
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14

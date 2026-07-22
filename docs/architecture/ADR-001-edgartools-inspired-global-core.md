@@ -11,9 +11,9 @@ API, document model, statement abstractions, caching patterns, and extensive
 tests, but its central company, filing, attachment, form, and XBRL workflows are
 coupled to SEC EDGAR, CIKs, accession numbers, SGML, and US-GAAP.
 
-The existing OpenFilings implementation already has working Companies House and
-FCA NSM adapters, normalized IDs, bounded extraction, OCR routing, compressed
-storage, CLI/MCP interfaces, and live UK verification.
+The existing OpenFilings implementation already has a working FCA NSM adapter,
+normalized IDs, bounded extraction, OCR routing, compressed storage, CLI/MCP
+interfaces, and live UK verification.
 
 ## Decision
 

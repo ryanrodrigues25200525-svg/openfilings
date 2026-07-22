@@ -30,6 +30,7 @@ LINE_ITEMS = (
             "Turnover",
             "TurnoverRevenue",
             "RevenueFromSaleOfGoodsAndServices",
+            "RevenueFromContractsWithCustomers",
             "SalesRevenue",
             "SalesRevenueNet",
             "NetSales",

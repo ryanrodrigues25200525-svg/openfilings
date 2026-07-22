@@ -18,7 +18,6 @@ _OCR_LANGUAGE_PATTERN = re.compile(r"^[A-Za-z0-9_.+-]+$")
 class Settings:
     """Runtime settings with deliberately conservative resource defaults."""
 
-    companies_house_api_key: str
     edinet_api_key: str
     data_dir: Path
     request_timeout_seconds: float = 30.0
@@ -31,13 +30,7 @@ class Settings:
     cache_max_mb: int = 512
 
     @classmethod
-    def from_env(cls, *, require_api_key: bool = False) -> Settings:
-        api_key = os.getenv("COMPANIES_HOUSE_API_KEY", "").strip()
-        if require_api_key and not api_key:
-            raise ConfigurationError(
-                "COMPANIES_HOUSE_API_KEY is required for Companies House requests."
-            )
-
+    def from_env(cls) -> Settings:
         data_dir_value = os.getenv("OPENFILINGS_DATA_DIR", ".openfilings")
         data_dir = Path(data_dir_value).expanduser().resolve()
         ocr_mode = os.getenv("OPENFILINGS_OCR_MODE", "auto").strip().casefold()
@@ -50,7 +43,6 @@ class Settings:
             raise ConfigurationError("OPENFILINGS_OCR_LANGUAGE is invalid.")
 
         return cls(
-            companies_house_api_key=api_key,
             edinet_api_key=os.getenv("EDINET_API_KEY", "").strip(),
             data_dir=data_dir,
             ocr_mode=cast(OcrMode, ocr_mode),

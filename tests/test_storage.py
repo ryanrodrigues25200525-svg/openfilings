@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
+import zlib
 
 from openfilings.models import ExtractionQuality, FilingContent
 from openfilings.storage.sqlite import SQLiteCache
@@ -77,3 +79,67 @@ def test_existing_cache_is_migrated_with_quality_metadata(tmp_path) -> None:
 
     assert restored is not None
     assert restored.quality.warnings == ("quality_not_recorded",)
+
+
+def test_existing_cache_removes_unsupported_source_records(tmp_path) -> None:
+    path = tmp_path / "unsupported-source.sqlite3"
+    SQLiteCache(path).close()
+    company_id = "private_123"
+    filing_id = "private_filing_123"
+    company = {
+        "id": company_id,
+        "source_id": "123",
+        "name": "Private Example Ltd",
+        "sources": ["private_registry"],
+        "source_url": "https://example.test/company/123",
+    }
+    filing = {
+        "id": filing_id,
+        "company_id": company_id,
+        "source": "private_registry",
+        "source_id": "filing-123",
+        "title": "Private filing",
+        "category": "accounts",
+        "filing_type": "annual",
+        "filing_date": "2025-01-01",
+        "source_url": "https://example.test/filing/123",
+    }
+    connection = sqlite3.connect(path)
+    with connection:
+        connection.execute(
+            "INSERT INTO companies VALUES (?, ?, ?)",
+            (company_id, json.dumps(company), "2025-01-01T00:00:00+00:00"),
+        )
+        connection.execute(
+            "INSERT INTO filings VALUES (?, ?, ?, ?)",
+            (
+                filing_id,
+                company_id,
+                json.dumps(filing),
+                "2025-01-01T00:00:00+00:00",
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO filing_content VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                filing_id,
+                zlib.compress(b"# Private filing"),
+                filing["source_url"],
+                "text/html",
+                "markdownify",
+                None,
+                hashlib.sha256(b"private").hexdigest(),
+                "2025-01-01T00:00:00+00:00",
+            ),
+        )
+    connection.close()
+
+    cache = SQLiteCache(path)
+    stats = cache.stats()
+    cache.close()
+
+    assert stats.companies == 0
+    assert stats.filings == 0
+    assert stats.documents == 0

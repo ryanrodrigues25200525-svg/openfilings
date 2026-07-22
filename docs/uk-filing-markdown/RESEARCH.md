@@ -2,8 +2,9 @@
 
 ## Overview
 
-Build a UK workflow that turns official Companies House and FCA National
-Storage Mechanism (NSM) filings into Markdown usable by a person or MCP client.
+Build a UK workflow that turns official FCA National Storage Mechanism (NSM)
+filings for publicly listed issuers into Markdown usable by a person or MCP
+client.
 
 ## Problem Statement
 
@@ -16,7 +17,7 @@ statement standardization.
 
 - Search a UK company by name.
 - Resolve a listed issuer to its LEI.
-- List Companies House filings and FCA regulated disclosures.
+- List FCA regulated disclosures.
 - Fetch one filing as Markdown.
 - Call the same operations from an LLM through MCP.
 
@@ -24,8 +25,6 @@ statement standardization.
 
 ### Approach Options
 
-- Companies House REST and Document APIs provide an official, authenticated
-  source for company records, filing histories, and source documents.
 - PyMuPDF4LLM provides local PDF-to-Markdown conversion without a GPU.
 - SQLite keeps the first release self-contained and supports compressed content.
 - The stable v1 MCP Python SDK supports a small stdio FastMCP server.
@@ -38,8 +37,6 @@ statement standardization.
   `https://data.fca.org.uk/artefacts/`.
 - FCA source documents currently include PDF, HTML, XHTML, and ZIP-packaged
   tagged annual financial reports, so extraction must dispatch by media type.
-- Companies House document metadata advertises all available representations;
-  tagged XHTML or ZIP accounts should be selected before PDF.
 - EdgarTools' collection and document ergonomics are reusable, but its company,
   attachment, and financial-statement pipeline is coupled to SEC forms, SGML,
   FilingSummary, and US-GAAP conventions.
@@ -94,9 +91,8 @@ return the same normalized schemas rather than separate representations.
 
 ## Integration Points
 
-Companies House remains authenticated with a free API key. FCA NSM search and
-downloads are public and free; the default client uses conservative page sizes,
-bounded retries, and no background crawling.
+FCA NSM search and downloads are public and free; the default client uses
+conservative page sizes, bounded retries, and no background crawling.
 
 ## Risks and Challenges
 
@@ -117,8 +113,6 @@ bounded retries, and no background crawling.
 
 ## References
 
-- [Companies House Public Data API](https://developer.company-information.service.gov.uk/)
-- [Companies House Document API resource metadata](https://developer-specs.company-information.service.gov.uk/document-api/resources/documentmetadata?v=latest)
 - [FCA National Storage Mechanism](https://data.fca.org.uk/#/nsm/nationalstoragemechanism)
 - [FCA ESEF preparation guidance](https://www.fca.org.uk/publication/fca/guidelines-preparation-esef-annual-financial-reports-fca.pdf)
 - [HMRC XBRL guide for UK businesses](https://www.gov.uk/government/publications/xbrl-guide-for-uk-businesses/xbrl-guide-for-uk-businesses)

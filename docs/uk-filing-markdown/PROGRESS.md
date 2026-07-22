@@ -17,7 +17,7 @@
 
 - Defined the phase boundaries and architecture.
 - Added normalized company, filing, and filing-content models.
-- Added Companies House search, paginated filing history, detail, and PDF retrieval.
+- Added FCA NSM search, filing history, detail, and document retrieval.
 - Added in-memory PDF-to-Markdown conversion without retaining source PDFs.
 - Added compressed SQLite metadata and Markdown caching.
 - Added CLI commands and three matching MCP tools.
@@ -27,15 +27,14 @@
 
 #### Decisions Made
 
-- Use Companies House as the first official source.
+- Use FCA NSM as the official UK listed-company source.
 - Use PyMuPDF4LLM without OCR for the default extraction path.
 - Compress Markdown in SQLite and discard downloaded PDF bytes after processing.
 - Pin MCP to stable v1 until v2 reaches a stable release.
 
 #### Blockers
 
-- None for implementation. A live smoke test remains pending until a Companies
-  House API key is configured locally.
+- None.
 
 ### Phase 2: FCA NSM Listed-Company Coverage
 
@@ -52,7 +51,7 @@
   reports also exposed as structured packages.
 - Added a dedicated read-only FCA NSM adapter with bounded retries and safe
   artefact URL validation.
-- Added LEI-aware issuer models and Companies House/FCA identity merging.
+- Added LEI-aware FCA issuer models.
 - Added combined filing timelines with explicit source provenance.
 - Added local HTML/XHTML and tagged ZIP-to-Markdown extraction.
 - Added content-hash duplicate reuse and conservative metadata deduplication.
@@ -106,7 +105,7 @@
 - Confirmed the reusable patterns and isolated SEC-specific dependencies.
 - Located and downloaded a representative public Tesco ESEF report package.
 - Added immutable filing collections and section-aware filing documents.
-- Added Companies House content negotiation for XHTML and ZIP tagged accounts.
+- Added content handling for XHTML and ZIP tagged annual reports.
 - Added a bounded streaming iXBRL parser with contexts, units, dimensions,
   transformations, signs, scales, and precision metadata.
 - Normalized UK-GAAP and IFRS facts into four statement types while preserving
@@ -129,6 +128,66 @@
 #### Blockers
 
 - None.
+
+### Global Listed-Market Expansion
+
+**Status:** Core target markets completed and production-hardened
+
+#### Current Coverage
+
+- UK FCA NSM
+- Japan EDINET
+- Netherlands, France, Spain, Italy, Denmark, Sweden, and Finland ESEF
+- Brazil CVM
+- Taiwan TWSE/MOPS
+- Hong Kong HKEX/HKEXnews
+- Singapore SGX
+
+#### Hong Kong Verification
+
+- Added a keyless HKEX adapter using the official securities workbook and
+  HKEXnews title search.
+- Limited search to Main Board and GEM issuer equities and deduplicated
+  alternate currency counters by ISIN.
+- Added exact annual and interim report discovery plus validated public PDF
+  downloads.
+- Added six isolated HKEX tests and passed the complete 71-test suite.
+- Live-tested HKEX stock `00388`: search and five-year filing history worked,
+  and the 2025 annual report converted to 510 KB of Markdown at 100/100 quality.
+
+#### Singapore Verification
+
+- Added a keyless SGX adapter using the official stocks, market-metadata, and
+  financial-reports feeds.
+- Limited discovery to Mainboard and Catalist stock counters, joined every
+  counter to SGX's issuer metadata, and excluded GlobalQuote/non-stock products.
+- Added annual-report discovery, validated announcement attachment selection,
+  and bounded public PDF downloads.
+- Added seven isolated SGX tests and passed the complete 78-test suite.
+- Live-tested SGX stock `S68`: company search and annual-report history worked;
+  the 6.4 MB 2025 report converted to 541,204 Markdown characters at 100/100
+  quality.
+
+#### Structured PDF Verification
+
+- Added conservative statement extraction for aligned native PDF text and
+  Markdown tables, with currency, scale, reporting-period, and source-label
+  provenance.
+- Live-tested SGX `S68` (42 facts), HKEX `00388` (22 facts), and Banco do Brasil
+  CVM filing `br_cvm_1046308` (16 facts) across income, balance-sheet, and cash
+  flow statements.
+- Added automatic structured-table OCR fallback for image-only PDFs when
+  Tesseract is installed; without it, the service returns an explicit error.
+- Kept Japan unchanged and excluded it from keyless scheduled smoke tests.
+
+#### Production Hardening
+
+- Added locked CI quality gates, Python 3.11–3.14 compatibility tests, wheel and
+  source-distribution smoke tests, CodeQL, strict dependency auditing, and
+  weekly dependency updates.
+- Added bounded scheduled live checks for FCA, ESEF, CVM, TWSE, HKEX, and SGX.
+- Added security, contribution, release, rollback, and changelog documentation.
+- Expanded the deterministic offline suite to 91 passing tests.
 
 ## Session Log
 
@@ -154,6 +213,21 @@
 - Live FCA verification converted Tesco's 2026 annual report to 968 KB of
   quality-scored Markdown and extracted four structured statements.
 
+### 2026-07-23
+
+- Completed Hong Kong HKEX/HKEXnews company search, annual/interim filing
+  history, validated PDF download, cache integration, CLI/MCP routing, and
+  Markdown extraction.
+- Verification: `71 passed`; Ruff, compilation, lock consistency, and diff
+  checks all passed.
+- Completed Singapore SGX company search, annual-report history, validated PDF
+  attachment selection, cache integration, CLI/MCP routing, and Markdown
+  extraction.
+- Verification: `78 passed`; Ruff and live end-to-end extraction passed.
+- Added normalized native-PDF and OCR statement extraction plus production CI,
+  package, security, and live-source gates.
+- Verification: `91 passed`; Ruff lint and formatting passed.
+
 ## Files Changed
 
 - `.env.example`, `.gitignore`, `pyproject.toml`, `README.md`
@@ -167,8 +241,7 @@
 
 - Keep source adapters separate from extraction and storage.
 - Make external clients and converters injectable for deterministic tests.
-- Treat LEI as the cross-source identity key while retaining Companies House IDs
-  as the preferred ID for exact name matches.
+- Treat LEI as the stable identity key for UK-listed issuers.
 - Isolate the unversioned FCA public search schema in one adapter.
 - Default to conditional OCR so scanned documents improve without making every
   PDF slow or increasing the base Python footprint.

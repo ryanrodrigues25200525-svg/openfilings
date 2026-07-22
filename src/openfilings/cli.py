@@ -1,4 +1,4 @@
-"""Command-line interface for UK and Japanese filings."""
+"""Command-line interface for supported public filing markets."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from openfilings.service import OpenFilingsService
 app = typer.Typer(
     name="openfilings",
     no_args_is_help=True,
-    help="Search UK/Japan filings and convert official documents to Markdown.",
+    help="Search supported public filings and convert them to Markdown.",
 )
 cache_app = typer.Typer(no_args_is_help=True, help="Inspect or prune the local cache.")
 app.add_typer(cache_app, name="cache")
@@ -31,9 +31,13 @@ app.add_typer(cache_app, name="cache")
 
 class SourceOption(StrEnum):
     all = "all"
-    companies_house = "companies-house"
     fca_nsm = "fca-nsm"
     edinet = "edinet"
+    esef = "esef"
+    cvm = "cvm"
+    twse = "twse"
+    hkex = "hkex"
+    sgx = "sgx"
 
 
 class OcrOption(StrEnum):
@@ -62,7 +66,7 @@ def search(
         SourceOption.all
     ),
 ) -> None:
-    """Search UK and Japanese companies through official filing sources."""
+    """Search companies through configured public filing sources."""
 
     async def run() -> None:
         async with OpenFilingsService.from_settings() as service:
@@ -85,12 +89,10 @@ def search(
 
 @app.command()
 def filings(
-    company_id: Annotated[
-        str, typer.Argument(help="OpenFilings company ID or Companies House number.")
-    ],
+    company_id: Annotated[str, typer.Argument(help="OpenFilings company ID.")],
     category: Annotated[
         str | None,
-        typer.Option(help="Companies House category; use an empty value for all."),
+        typer.Option(help="Filing category; use an empty value for all."),
     ] = "accounts",
     limit: Annotated[int, typer.Option(min=1, max=500)] = 25,
     source: Annotated[SourceOption, typer.Option(help="Filing source to include.")] = (
@@ -187,7 +189,7 @@ def financials(
         bool, typer.Option(help="Ignore locally cached structured financials.")
     ] = False,
 ) -> None:
-    """Extract normalized statements from UK, ESEF, or EDINET Inline XBRL."""
+    """Extract normalized statements from tagged filings or supported PDFs."""
 
     async def run() -> None:
         async with OpenFilingsService.from_settings() as service:

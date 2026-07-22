@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from openfilings.models import (
+    SUPPORTED_SOURCE_NAMES,
     CacheStats,
     Company,
     ExtractionQuality,
@@ -78,6 +79,20 @@ class SQLiteCache:
             "SELECT payload FROM companies WHERE id = ?", (company_id,)
         ).fetchone()
         return Company.model_validate_json(row[0]) if row else None
+
+    def search_companies(self, query: str, *, limit: int = 10) -> list[Company]:
+        rows = self._connection.execute("SELECT payload FROM companies").fetchall()
+        companies = [Company.model_validate_json(row[0]) for row in rows]
+        wanted = query.strip().casefold()
+        if not wanted:
+            return []
+        matches = [
+            company for company in companies if _company_matches(company, wanted)
+        ]
+        matches.sort(
+            key=lambda company: (_company_match_rank(company, wanted), company.name)
+        )
+        return matches[: max(0, limit)]
 
     def get_filing(self, filing_id: str) -> Filing | None:
         row = self._connection.execute(
@@ -401,6 +416,42 @@ class SQLiteCache:
                 self._connection.execute(
                     "ALTER TABLE filing_content ADD COLUMN quality_json TEXT"
                 )
+            self._remove_unsupported_source_records()
+
+    def _remove_unsupported_source_records(self) -> None:
+        company_ids = self._unsupported_company_ids()
+        filing_ids = self._unsupported_filing_ids(company_ids)
+        self._delete_records("filing_content", "filing_id", filing_ids)
+        self._delete_records("filing_financials", "filing_id", filing_ids)
+        self._delete_records("filings", "id", filing_ids)
+        self._delete_records("companies", "id", company_ids)
+
+    def _unsupported_company_ids(self) -> set[str]:
+        rows = self._connection.execute("SELECT id, payload FROM companies").fetchall()
+        return {
+            str(company_id)
+            for company_id, payload in rows
+            if not _company_payload_is_supported(str(payload))
+        }
+
+    def _unsupported_filing_ids(self, company_ids: set[str]) -> set[str]:
+        rows = self._connection.execute(
+            "SELECT id, company_id, payload FROM filings"
+        ).fetchall()
+        return {
+            str(filing_id)
+            for filing_id, company_id, payload in rows
+            if str(company_id) in company_ids
+            or not _filing_payload_is_supported(str(payload))
+        }
+
+    def _delete_records(self, table: str, key: str, record_ids: set[str]) -> None:
+        if not record_ids:
+            return
+        self._connection.executemany(
+            f"DELETE FROM {table} WHERE {key} = ?",
+            [(record_id,) for record_id in record_ids],
+        )
 
     def _count(self, table: str) -> int:
         if table not in {
@@ -429,3 +480,41 @@ def _quality_from_json(value: str | None) -> ExtractionQuality:
             status="degraded",
             warnings=("invalid_cached_quality_metadata",),
         )
+
+
+def _company_matches(company: Company, query: str) -> bool:
+    return any(query in value.casefold() for value in _company_search_values(company))
+
+
+def _company_match_rank(company: Company, query: str) -> int:
+    return (
+        0
+        if any(query == value.casefold() for value in _company_search_values(company))
+        else 1
+    )
+
+
+def _company_search_values(company: Company) -> tuple[str, ...]:
+    return (
+        company.id,
+        company.name,
+        company.lei or "",
+        company.ticker or "",
+        company.local_code or "",
+    )
+
+
+def _company_payload_is_supported(payload: str) -> bool:
+    try:
+        sources = set(json.loads(payload)["sources"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    return bool(sources) and sources <= SUPPORTED_SOURCE_NAMES
+
+
+def _filing_payload_is_supported(payload: str) -> bool:
+    try:
+        source = json.loads(payload)["source"]
+    except (KeyError, TypeError, ValueError):
+        return False
+    return source in SUPPORTED_SOURCE_NAMES

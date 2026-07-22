@@ -133,7 +133,7 @@ async def test_service_routes_japanese_search_history_and_cached_markdown(
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         edinet = EdinetClient("key", client=http, min_request_interval=0)
         cache = SQLiteCache(tmp_path / "cache.sqlite3")
-        service = OpenFilingsService(None, cache, edinet_source=edinet)
+        service = OpenFilingsService(cache, edinet_source=edinet)
 
         companies = await service.search_companies("Sony", source="edinet")
         filings = await service.list_filings(

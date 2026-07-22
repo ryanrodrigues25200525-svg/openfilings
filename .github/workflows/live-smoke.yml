@@ -1,0 +1,33 @@
+name: Keyless live smoke tests
+
+on:
+  schedule:
+    - cron: "41 4 * * 3"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: keyless-live-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    name: Public regulator contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.30"
+          python-version: "3.13"
+          enable-cache: true
+      - name: Install locked dependencies
+        run: uv sync --locked --all-extras
+      - name: Run keyless regulator checks
+        env:
+          OPENFILINGS_DATA_DIR: ${{ runner.temp }}/openfilings-smoke
+        run: uv run python -m openfilings.smoke

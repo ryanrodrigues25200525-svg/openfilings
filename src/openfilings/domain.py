@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from datetime import date
+from math import log
 
 from openfilings.models import Filing, FilingContent
 
 _HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
+_WORD = re.compile(r"[^\W_]+", re.UNICODE)
 
 
 class Filings(Sequence[Filing]):
@@ -92,6 +95,36 @@ class DocumentSection:
 
 
 @dataclass(frozen=True, slots=True)
+class SectionSearchResult:
+    """One ranked document-section match."""
+
+    section: DocumentSection
+    score: float
+    matched_terms: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _SearchCorpus:
+    terms: tuple[str, ...]
+    document_frequency: dict[str, int]
+    average_length: float
+    document_count: int
+
+    def term_score(self, term: str, frequency: int, document_length: int) -> float:
+        k1 = 1.5
+        b = 0.75
+        frequency_in_documents = self.document_frequency[term]
+        inverse_frequency = log(
+            1
+            + (self.document_count - frequency_in_documents + 0.5)
+            / (frequency_in_documents + 0.5)
+        )
+        length_ratio = document_length / self.average_length
+        denominator = frequency + k1 * (1 - b + b * length_ratio)
+        return inverse_frequency * frequency * (k1 + 1) / denominator
+
+
+@dataclass(frozen=True, slots=True)
 class FilingDocument:
     """A filing's Markdown plus section navigation and local search."""
 
@@ -140,11 +173,48 @@ class FilingDocument:
         )
 
     def search(self, query: str, *, limit: int = 20) -> tuple[DocumentSection, ...]:
-        wanted = query.strip().casefold()
-        if not wanted or limit < 1:
-            return ()
         return tuple(
-            section
-            for section in self.sections
-            if wanted in section.markdown.casefold()
-        )[:limit]
+            result.section for result in self.ranked_search(query, limit=limit)
+        )
+
+    def ranked_search(
+        self, query: str, *, limit: int = 20
+    ) -> tuple[SectionSearchResult, ...]:
+        terms = tuple(sorted(set(_tokens(query))))
+        if not terms or limit < 1 or not self.sections:
+            return ()
+        document_tokens = [_tokens(section.markdown) for section in self.sections]
+        document_frequency = {
+            term: sum(term in tokens for tokens in document_tokens) for term in terms
+        }
+        average_length = sum(map(len, document_tokens)) / len(document_tokens)
+        corpus = _SearchCorpus(
+            terms,
+            document_frequency,
+            average_length,
+            len(self.sections),
+        )
+        results = [
+            _search_result(section, tokens, corpus)
+            for section, tokens in zip(self.sections, document_tokens, strict=True)
+        ]
+        matches = [result for result in results if result.matched_terms]
+        matches.sort(key=lambda result: (-result.score, result.section.start_line))
+        return tuple(matches[:limit])
+
+
+def _search_result(
+    section: DocumentSection,
+    tokens: list[str],
+    corpus: _SearchCorpus,
+) -> SectionSearchResult:
+    counts = Counter(tokens)
+    matched = tuple(term for term in corpus.terms if counts[term])
+    score = sum(corpus.term_score(term, counts[term], len(tokens)) for term in matched)
+    title_terms = set(_tokens(section.title))
+    score += sum(1.5 for term in matched if term in title_terms)
+    return SectionSearchResult(section, round(score, 6), matched)
+
+
+def _tokens(value: str) -> list[str]:
+    return [match.group(0).casefold() for match in _WORD.finditer(value)]

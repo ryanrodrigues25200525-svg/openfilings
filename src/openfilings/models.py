@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -13,7 +13,15 @@ class DomainModel(BaseModel):
     model_config = ConfigDict(extra="ignore", frozen=True)
 
 
-SourceName = Literal["companies_house", "fca_nsm", "edinet"]
+SourceName = Literal["fca_nsm", "edinet", "esef", "cvm", "twse", "hkex", "sgx"]
+SourceSelection = Literal[
+    "all", "fca_nsm", "edinet", "esef", "cvm", "twse", "hkex", "sgx"
+]
+SUPPORTED_SOURCE_NAMES = frozenset(
+    {"fca_nsm", "edinet", "esef", "cvm", "twse", "hkex", "sgx"}
+)
+MarketCode = Annotated[str, Field(pattern=r"^[A-Z]{2}$")]
+CountryCode = Annotated[str, Field(pattern=r"^[A-Z]{2}$")]
 QualityStatus = Literal["good", "degraded", "unusable"]
 OcrMode = Literal["auto", "never", "always"]
 StatementType = Literal[
@@ -45,10 +53,10 @@ class Company(DomainModel):
     id: str
     source_id: str
     name: str
-    sources: tuple[SourceName, ...] = ("companies_house",)
+    sources: tuple[SourceName, ...] = ("fca_nsm",)
     lei: str | None = None
-    market: Literal["UK", "JP"] = "UK"
-    country_code: Literal["GB", "JP"] = "GB"
+    market: MarketCode = "UK"
+    country_code: CountryCode = "GB"
     ticker: str | None = None
     local_code: str | None = None
     english_name: str | None = None
@@ -61,7 +69,7 @@ class Company(DomainModel):
 class Filing(DomainModel):
     id: str
     company_id: str
-    source: SourceName = "companies_house"
+    source: SourceName = "fca_nsm"
     source_id: str
     title: str
     category: str
@@ -110,6 +118,11 @@ class ReportingPeriod(DomainModel):
     kind: Literal["instant", "duration"]
     fiscal_period: str | None = None
 
+    @property
+    def label(self) -> str:
+        prefix = f"{self.fiscal_period} " if self.fiscal_period else ""
+        return f"{prefix}{self.end_date.isoformat()}"
+
 
 class FinancialValue(DomainModel):
     """One normalized numeric fact with its original XBRL provenance."""
@@ -138,6 +151,56 @@ class FinancialStatement(DomainModel):
     currency: str | None = None
     line_items: tuple[FinancialLineItem, ...]
 
+    @property
+    def periods(self) -> tuple[ReportingPeriod, ...]:
+        periods: dict[str, ReportingPeriod] = {}
+        for item in self.line_items:
+            for value in item.values:
+                periods.setdefault(value.period.label, value.period)
+        return tuple(periods.values())
+
+    def to_records(self) -> tuple[dict[str, object], ...]:
+        labels = [period.label for period in self.periods]
+        records: list[dict[str, object]] = []
+        for item in self.line_items:
+            values = {value.period.label: value.value for value in item.values}
+            records.append(
+                {
+                    "code": item.code,
+                    "name": item.name,
+                    "concept": item.concept,
+                    **{label: values.get(label) for label in labels},
+                }
+            )
+        return tuple(records)
+
+    def to_markdown(self) -> str:
+        labels = [period.label for period in self.periods]
+        heading = f"## {self.title}"
+        currency = f" ({self.currency})" if self.currency else ""
+        header = ["Line item", *labels]
+        divider = ["---", *("---:" for _ in labels)]
+        rows = [
+            [
+                str(record["name"]),
+                *(_markdown_value(record[label]) for label in labels),
+            ]
+            for record in self.to_records()
+        ]
+        table = "\n".join(_markdown_row(row) for row in [header, divider, *rows])
+        return f"{heading}{currency}\n\n{table}\n"
+
+    def to_dataframe(self) -> Any:
+        """Return a pandas DataFrame when the optional dependency is installed."""
+
+        try:
+            import pandas as pd
+        except ImportError as exc:
+            raise ImportError(
+                "Install openfilings[dataframe] to use to_dataframe()."
+            ) from exc
+        return pd.DataFrame(self.to_records())
+
 
 class FilingFinancials(DomainModel):
     """Structured statements extracted from a tagged filing."""
@@ -152,6 +215,34 @@ class FilingFinancials(DomainModel):
     sha256: str = Field(min_length=64, max_length=64)
     extracted_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     from_cache: bool = False
+
+    def statement(self, statement_type: StatementType) -> FinancialStatement | None:
+        return next(
+            (
+                statement
+                for statement in self.statements
+                if statement.statement_type == statement_type
+            ),
+            None,
+        )
+
+    def income_statement(self) -> FinancialStatement | None:
+        return self.statement("income_statement")
+
+    def balance_sheet(self) -> FinancialStatement | None:
+        return self.statement("balance_sheet")
+
+    def cash_flow_statement(self) -> FinancialStatement | None:
+        return self.statement("cash_flow_statement")
+
+    def comprehensive_income(self) -> FinancialStatement | None:
+        return self.statement("comprehensive_income")
+
+    def changes_in_equity(self) -> FinancialStatement | None:
+        return self.statement("changes_in_equity")
+
+    def to_markdown(self) -> str:
+        return "\n".join(statement.to_markdown() for statement in self.statements)
 
 
 class CacheStats(DomainModel):
@@ -169,3 +260,15 @@ class CachePruneResult(DomainModel):
     removed_financial_reports: int = Field(default=0, ge=0)
     before: CacheStats
     after: CacheStats
+
+
+def _markdown_row(values: list[str]) -> str:
+    return "| " + " | ".join(value.replace("|", "\\|") for value in values) + " |"
+
+
+def _markdown_value(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, Decimal):
+        return format(value, "f")
+    return str(value)

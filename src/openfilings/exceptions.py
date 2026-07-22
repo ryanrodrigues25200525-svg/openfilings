@@ -17,6 +17,10 @@ class FilingNotFoundError(OpenFilingsError):
     """Raised when a filing ID cannot be resolved."""
 
 
+class CompanyNotFoundError(OpenFilingsError):
+    """Raised when a company query has no matching issuer."""
+
+
 class DocumentUnavailableError(OpenFilingsError):
     """Raised when a filing has no usable source document."""
 

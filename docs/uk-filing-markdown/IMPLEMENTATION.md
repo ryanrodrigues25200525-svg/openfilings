@@ -2,14 +2,14 @@
 
 ## Overview
 
-Implement a local-first UK vertical slice using Companies House, PDF-to-Markdown
-conversion, SQLite caching, a CLI, and MCP.
+Implement a local-first UK listed-company vertical slice using FCA NSM,
+PDF-to-Markdown conversion, SQLite caching, a CLI, and MCP.
 
 ## Prerequisites
 
 - Python 3.11 or newer
 - `uv`
-- A Companies House API key for live requests
+- No API key is required for UK live requests
 
 ## Phase Summary
 
@@ -36,15 +36,15 @@ architectural boundary.
 ### Tasks
 
 - [x] Create package configuration and normalized models.
-- [x] Implement Companies House search, filing, and document retrieval.
+- [x] Implement FCA NSM search, filing, and document retrieval.
 - [x] Implement PDF-to-Markdown conversion and compressed SQLite caching.
 - [x] Add CLI and MCP interfaces.
 - [x] Add offline tests and user documentation.
 
 ### Success Criteria
 
-All tests pass offline; live commands require only a Companies House API key;
-repeated Markdown retrieval is served from the local cache.
+All tests pass offline; live UK commands are keyless; repeated Markdown
+retrieval is served from the local cache.
 
 ### Files Likely Affected
 
@@ -57,7 +57,7 @@ repeated Markdown retrieval is served from the local cache.
 ### Objective
 
 Add annual reports, prospectuses, and regulated announcements for UK-listed
-issuers, resolving Companies House IDs to LEIs and market identifiers.
+issuers, resolving names to LEIs and stable market identifiers.
 
 ### Tasks
 
@@ -72,8 +72,8 @@ issuers, resolving Companies House IDs to LEIs and market identifiers.
 ### Success Criteria
 
 A listed issuer can be searched once, carries its LEI into the local identity
-cache, and returns both Companies House and FCA NSM filings. Repeated or
-byte-identical source documents reuse cached Markdown.
+cache, and returns FCA NSM filings. Repeated or byte-identical source documents
+reuse cached Markdown.
 
 ---
 
@@ -102,13 +102,13 @@ remains lightweight.
 
 ### Objective
 
-Prefer tagged Companies House accounts when available, extract standardized
-statements from UK and ESEF iXBRL, and expose them through Python, CLI, and MCP.
+Prefer tagged FCA annual reports when available, extract standardized statements
+from UK and ESEF iXBRL, and expose them through Python, CLI, and MCP.
 
 ### Tasks
 
 - [x] Add EdgarTools-inspired filing collections and parsed document sections.
-- [x] Negotiate Companies House XHTML/ZIP resources before falling back to PDF.
+- [x] Extract FCA XHTML/ZIP resources before falling back to PDF.
 - [x] Add a bounded streaming iXBRL parser with contexts, units, dimensions, and
   numeric transformations.
 - [x] Normalize UK-GAAP and IFRS facts into income statement, balance sheet, and

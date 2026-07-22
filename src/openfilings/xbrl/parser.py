@@ -10,11 +10,11 @@ from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
 
 from openfilings.exceptions import FinancialsUnavailableError
+from openfilings.limits import MAX_TAGGED_DOCUMENT_BYTES
 
 _WHITESPACE = re.compile(r"\s+")
 _NUMERIC_TAGS = {"nonfraction", "fraction"}
 _FACT_TAGS = _NUMERIC_TAGS | {"nonnumeric"}
-_MAX_DOCUMENT_BYTES = 80 * 1024 * 1024
 _MAX_FACTS = 100_000
 _MAX_CONTEXTS = 20_000
 _FEED_CHUNK_BYTES = 256 * 1024
@@ -247,10 +247,10 @@ def parse_inline_xbrl(document: bytes) -> ParsedXbrl:
 
     if not document.strip():
         raise FinancialsUnavailableError("The tagged report is empty.")
-    if len(document) > _MAX_DOCUMENT_BYTES:
+    if len(document) > MAX_TAGGED_DOCUMENT_BYTES:
         raise FinancialsUnavailableError(
             "The tagged report exceeds the "
-            f"{_MAX_DOCUMENT_BYTES // 1024 // 1024} MB limit."
+            f"{MAX_TAGGED_DOCUMENT_BYTES // 1024 // 1024} MB limit."
         )
     parser = InlineXbrlParser()
     try:

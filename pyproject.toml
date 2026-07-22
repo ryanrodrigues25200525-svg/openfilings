@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "openfilings"
-version = "0.5.0"
-description = "Search, parse, and normalize UK and Japanese corporate filings."
+version = "0.19.0"
+description = "Search, parse, and normalize public filings across global markets."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -17,8 +17,12 @@ dependencies = [
   "typer>=0.15,<1",
 ]
 
+[project.optional-dependencies]
+dataframe = ["pandas>=2.2,<4"]
+
 [project.scripts]
 openfilings = "openfilings.cli:app"
+openfilings-smoke = "openfilings.smoke:main"
 
 [dependency-groups]
 dev = [

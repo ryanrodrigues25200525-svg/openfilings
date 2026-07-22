@@ -12,8 +12,10 @@ from openfilings.service import OpenFilingsService
 mcp = FastMCP(
     "OpenFilings",
     instructions=(
-        "Search UK and Japanese companies, list Companies House, FCA NSM, and "
-        "EDINET filings, and retrieve documents as Markdown. All tools are read-only."
+        "Search UK, Japanese, European, Brazilian, Taiwanese, Hong Kong, and "
+        "Singapore-listed companies; list FCA NSM, EDINET, ESEF, CVM, TWSE/MOPS, "
+        "HKEXnews, and SGX filings; and retrieve documents as Markdown. "
+        "All tools are read-only."
     ),
 )
 
@@ -22,7 +24,7 @@ mcp = FastMCP(
 async def companies_search(
     query: str, limit: int = 10, source: str = "all"
 ) -> list[dict[str, Any]]:
-    """Search UK/Japan companies and return stable OpenFilings company IDs."""
+    """Search supported markets and return stable OpenFilings company IDs."""
 
     async with OpenFilingsService.from_settings() as service:
         companies = await service.search_companies(query, limit=limit, source=source)
@@ -96,7 +98,7 @@ async def filing_financials(
     filing_id: str,
     refresh: bool = False,
 ) -> dict[str, Any]:
-    """Extract normalized statements from UK, ESEF, or EDINET Inline XBRL."""
+    """Extract normalized statements from tagged filings or supported PDFs."""
 
     async with OpenFilingsService.from_settings() as service:
         financials = await service.get_filing_financials(

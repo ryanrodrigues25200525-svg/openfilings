@@ -10,6 +10,7 @@ import pytest
 from openfilings.adapters.base import SourceDocument
 from openfilings.domain import FilingDocument, Filings
 from openfilings.exceptions import FinancialsUnavailableError
+from openfilings.limits import MAX_TAGGED_DOCUMENT_BYTES
 from openfilings.models import ExtractionQuality, Filing, FilingContent
 from openfilings.storage.sqlite import SQLiteCache
 from openfilings.xbrl import extract_filing_financials
@@ -36,6 +37,18 @@ def test_inline_xbrl_builds_normalized_statements() -> None:
     ]
     # The dimensional segment fact is deliberately excluded in favour of totals.
     assert all(not value.dimensions for value in revenue.values)
+    assert financials.income_statement() == income
+    assert financials.balance_sheet() == financials.statements[1]
+    assert financials.cash_flow_statement() == financials.statements[2]
+
+    records = income.to_records()
+    revenue_record = next(item for item in records if item["code"] == "revenue")
+    assert revenue_record["FY 2024-12-31"] == Decimal("1234000")
+    assert revenue_record["FY 2023-12-31"] == Decimal("1100000")
+
+    markdown = financials.to_markdown()
+    assert "## Income statement" in markdown
+    assert "| Revenue | 1234000 | 1100000 |" in markdown
 
     cash_flow = financials.statements[2]
     investing = next(
@@ -97,6 +110,24 @@ def test_uk_gaap_concept_aliases_are_normalized() -> None:
     assert {"total_assets", "total_liabilities", "total_equity"} <= codes
 
 
+def test_current_ifrs_revenue_concept_is_normalized() -> None:
+    report = _ixbrl().replace(
+        b"ifrs-full:Revenue", b"ifrs-full:RevenueFromContractsWithCustomers"
+    )
+
+    financials = extract_filing_financials(_document(report), _filing())
+    revenue = next(
+        item for item in financials.statements[0].line_items if item.code == "revenue"
+    )
+
+    assert revenue.concept == "ifrs-full:RevenueFromContractsWithCustomers"
+    assert revenue.values[0].value == Decimal("1234000")
+
+
+def test_tagged_document_limit_supports_large_esef_reports() -> None:
+    assert MAX_TAGGED_DOCUMENT_BYTES == 150 * 1024 * 1024
+
+
 def test_untagged_html_has_no_structured_financials() -> None:
     with pytest.raises(FinancialsUnavailableError, match="numeric facts"):
         extract_filing_financials(
@@ -142,6 +173,31 @@ def test_filings_collection_and_document_sections() -> None:
     document = FilingDocument.from_content(content)
     assert document.section("revenue") is not None
     assert any(section.title == "Revenue" for section in document.search("rose"))
+
+
+def test_document_search_ranks_multi_term_section_matches() -> None:
+    content = FilingContent(
+        filing_id="ranked-search",
+        markdown=(
+            "# Report\n\nOverview.\n\n"
+            "## Liquidity\n\nCash and liquidity remained strong.\n\n"
+            "## Revenue growth\n\nRevenue growth accelerated across regions.\n\n"
+            "## Risks\n\nRevenue may be affected by currency risk.\n"
+        ),
+        source_url="https://example.test/report.xhtml",
+        media_type="application/xhtml+xml",
+        extraction_method="markdownify",
+        quality=ExtractionQuality(score=100, status="good", warnings=()),
+        sha256="b" * 64,
+    )
+    document = FilingDocument.from_content(content)
+
+    results = document.ranked_search("revenue growth")
+
+    assert results[0].section.title == "Revenue growth"
+    assert results[0].matched_terms == ("growth", "revenue")
+    assert results[0].score > results[1].score
+    assert document.search("revenue growth")[0].title == "Revenue growth"
 
 
 def _filing() -> Filing:

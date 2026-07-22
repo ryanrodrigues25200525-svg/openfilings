@@ -1,4 +1,4 @@
-"""Normalize UK/ESEF Inline XBRL facts into compact financial statements."""
+"""Normalize tagged facts or high-confidence PDF tables into statements."""
 
 from __future__ import annotations
 
@@ -26,6 +26,7 @@ from openfilings.xbrl.mappings import (
     definition_for_concept,
 )
 from openfilings.xbrl.parser import ParsedXbrl, XbrlContext, XbrlFact, parse_inline_xbrl
+from openfilings.xbrl.pdf_statements import extract_pdf_source_financials
 
 _HTML_TYPES = {"text/html", "application/xhtml+xml"}
 _ZIP_TYPES = {"application/zip", "application/x-zip-compressed"}
@@ -50,7 +51,15 @@ def extract_filing_financials(
     document: SourceDocument,
     filing: Filing,
 ) -> FilingFinancials:
-    """Extract standardized statements from one tagged filing document."""
+    """Extract standardized statements from one supported filing document."""
+
+    if _is_pdf(document):
+        return extract_pdf_source_financials(
+            document.data,
+            filing,
+            source_url=document.source_url,
+            sha256=hashlib.sha256(document.data).hexdigest(),
+        )
 
     report = _inline_report(document, filing)
     parsed = parse_inline_xbrl(report)
@@ -356,3 +365,10 @@ def _precision(decimals: str | None) -> int:
 def _looks_like_html(data: bytes) -> bool:
     prefix = data[:512].lstrip().lower()
     return prefix.startswith((b"<!doctype html", b"<html", b"<?xml"))
+
+
+def _is_pdf(document: SourceDocument) -> bool:
+    return (
+        document.media_type.casefold() == "application/pdf"
+        or document.data.startswith(b"%PDF")
+    )
