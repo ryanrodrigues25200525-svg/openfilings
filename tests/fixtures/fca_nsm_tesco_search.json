@@ -1,0 +1,40 @@
+{
+  "took": 15,
+  "timed_out": false,
+  "hits": {
+    "total": {
+      "relation": "eq",
+      "value": 5043
+    },
+    "hits": [
+      {
+        "_index": "fca-nsm-searchdata",
+        "_id": "5ebfff2c-6970-4b9a-8357-53e04bcf1ed5",
+        "_source": {
+          "submitted_date": "2026-07-13T13:57:09Z",
+          "tag_esef": "",
+          "document_date": "2026-07-13T13:57:09Z",
+          "source": "RNS",
+          "type": "Admission to Trading",
+          "related_org": [
+            {
+              "lei": "2138002P5RNKC5W2JZ46",
+              "company": "TESCO PLC"
+            }
+          ],
+          "lei_remediation_flag": "N",
+          "lei": "21380018AJDKNF3A6712",
+          "download_link": "NSM/RNS/5ebfff2c-6970-4b9a-8357-53e04bcf1ed5.html",
+          "disclosure_id": "5ebfff2c-6970-4b9a-8357-53e04bcf1ed5",
+          "latest_flag": "Y",
+          "hist_seq": "1",
+          "publication_date": "2026-07-13T13:45:00Z",
+          "seq_id": "5ebfff2c-6970-4b9a-8357-53e04bcf1ed5",
+          "company": "TESCO CORPORATE TREASURY SERVICES PLC",
+          "headline": "Admission to Trading",
+          "type_code": "ADM"
+        }
+      }
+    ]
+  }
+}
