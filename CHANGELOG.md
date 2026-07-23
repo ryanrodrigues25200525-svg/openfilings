@@ -6,6 +6,11 @@ All notable changes to OpenFilings are documented in this file.
 
 ### Added
 
+- Added six more keyless ESEF markets - Norway, Poland, Belgium, Austria,
+  Luxembourg, and Portugal - reusing the existing generic ESEF connector
+  against filings.xbrl.org. Verified live end-to-end (search, filings,
+  financials, balance-sheet identity) against Equinor, Orlen, KBC,
+  Verbund, ArcelorMittal, and EDP.
 - Brazil now reads CVM's Open Data DFP/ITR datasets directly for financial
   statements - a standardized chart of accounts published as free bulk
   CSV/ZIP archives - instead of parsing the PDF filing. Falls back to the

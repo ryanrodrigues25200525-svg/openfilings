@@ -80,6 +80,36 @@ FINLAND = EsefMarket(
     market_code="FI",
     country_name="Finland",
 )
+NORWAY = EsefMarket(
+    country_code="NO",
+    market_code="NO",
+    country_name="Norway",
+)
+POLAND = EsefMarket(
+    country_code="PL",
+    market_code="PL",
+    country_name="Poland",
+)
+BELGIUM = EsefMarket(
+    country_code="BE",
+    market_code="BE",
+    country_name="Belgium",
+)
+AUSTRIA = EsefMarket(
+    country_code="AT",
+    market_code="AT",
+    country_name="Austria",
+)
+LUXEMBOURG = EsefMarket(
+    country_code="LU",
+    market_code="LU",
+    country_name="Luxembourg",
+)
+PORTUGAL = EsefMarket(
+    country_code="PT",
+    market_code="PT",
+    country_name="Portugal",
+)
 ENABLED_ESEF_MARKETS = (
     NETHERLANDS,
     FRANCE,
@@ -88,6 +118,12 @@ ENABLED_ESEF_MARKETS = (
     DENMARK,
     SWEDEN,
     FINLAND,
+    NORWAY,
+    POLAND,
+    BELGIUM,
+    AUSTRIA,
+    LUXEMBOURG,
+    PORTUGAL,
 )
 
 

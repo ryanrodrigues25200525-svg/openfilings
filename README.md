@@ -433,8 +433,9 @@ and [issuer-code
 archive](https://disclosure2dl.edinet-fsa.go.jp/searchdocument/codelist/Edinetcode.zip).
 It sends a subscription key only as an API parameter and never persists it.
 
-The Netherlands, France, Spain, Italy, Denmark, Sweden, and Finland connectors
-use the free, keyless
+The Netherlands, France, Spain, Italy, Denmark, Sweden, Finland, Norway,
+Poland, Belgium, Austria, Luxembourg, and Portugal connectors use the free,
+keyless
 [filings.xbrl.org API](https://filings.xbrl.org/docs/api). XBRL International
 sources ESEF reports from the relevant national collection authority; its index
 can lag or omit filings, so this feed should not be treated as a real-time legal

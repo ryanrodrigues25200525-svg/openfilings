@@ -35,6 +35,12 @@ def test_enabled_esef_markets() -> None:
         "DK",
         "SE",
         "FI",
+        "NO",
+        "PL",
+        "BE",
+        "AT",
+        "LU",
+        "PT",
     )
 
 

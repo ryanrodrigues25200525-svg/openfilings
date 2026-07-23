@@ -1,6 +1,7 @@
 .env
 .openfilings/
 .DS_Store
+.claude/worktrees/
 .pytest_cache/
 .ruff_cache/
 .venv/

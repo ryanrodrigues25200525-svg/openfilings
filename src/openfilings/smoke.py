@@ -51,6 +51,13 @@ SMOKE_CASES = (
     # bucket previously fell outside the current+noncurrent derivation.
     SmokeCase("ESEF Sweden", "Aktiebolaget Volvo", "esef"),
     SmokeCase("ESEF Finland", "Nokia", "esef"),
+    SmokeCase("ESEF Norway", "Equinor", "esef"),
+    SmokeCase("ESEF Poland", "Orlen", "esef"),
+    SmokeCase("ESEF Belgium", "KBC", "esef"),
+    # OMV's recent filings omit a tagged total_liabilities line item.
+    SmokeCase("ESEF Austria", "Verbund", "esef"),
+    SmokeCase("ESEF Luxembourg", "ArcelorMittal", "esef"),
+    SmokeCase("ESEF Portugal", "EDP", "esef"),
     SmokeCase("Brazil CVM", "Petrobras", "cvm"),
     # Regression guard: Keppel's "net assets" presentation previously
     # misread its non-current liabilities subtotal.
