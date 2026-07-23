@@ -33,6 +33,7 @@ from openfilings.exceptions import (
     ExtractionError,
     FilingNotFoundError,
     FinancialsUnavailableError,
+    SourceError,
 )
 from openfilings.extraction.document import OcrConverter, extract_document
 from openfilings.extraction.html import html_to_markdown
@@ -58,6 +59,7 @@ from openfilings.resources import (
 )
 from openfilings.storage.sqlite import SQLiteCache
 from openfilings.xbrl import extract_filing_financials
+from openfilings.xbrl.cvm_structured import extract_cvm_structured_financials
 from openfilings.xbrl.pdf_statements import extract_pdf_ocr_financials
 
 _Result = TypeVar("_Result")
@@ -653,6 +655,14 @@ class OpenFilingsService:
         if filing is None:
             filing = await self._resolve_filing(filing_id)
             self._cache.put_filings([filing])
+
+        if filing.source == "cvm":
+            structured = await self._extract_cvm_structured_financials(filing)
+            if structured is not None:
+                self._cache.put_financials(structured)
+                self._enforce_cache_limit()
+                return structured
+
         if not filing.document_id:
             raise DocumentUnavailableError(
                 f"Filing {filing.id} does not expose a downloadable document."
@@ -674,6 +684,44 @@ class OpenFilingsService:
         self._cache.put_financials(financials)
         self._enforce_cache_limit()
         return financials
+
+    async def _extract_cvm_structured_financials(
+        self, filing: Filing
+    ) -> FilingFinancials | None:
+        """Prefer CVM's Open Data DFP/ITR dataset over the PDF filing - it's
+        already tagged to a standardized chart of accounts, so it doesn't
+        need heuristic PDF parsing at all. Falls back to None (letting the
+        caller use the PDF path) if the company or year isn't covered."""
+
+        if self._cvm is None or filing.period_end is None:
+            return None
+        match = re.fullmatch(r"br_cvm_(\d{1,6})", filing.company_id, re.IGNORECASE)
+        if match is None:
+            return None
+        cd_cvm = match.group(1).zfill(6)
+        dataset = "itr" if filing.filing_type == "interim" else "dfp"
+        try:
+            archive = await self._cvm.structured_archive(
+                dataset, filing.period_end.year
+            )
+        except SourceError:
+            return None
+        if archive is None:
+            return None
+        digest = hashlib.sha256(archive).hexdigest()
+        try:
+            return await asyncio.to_thread(
+                extract_cvm_structured_financials,
+                archive,
+                filing,
+                cd_cvm=cd_cvm,
+                source_url=CvmClient.structured_archive_url(
+                    dataset, filing.period_end.year
+                ),
+                sha256=digest,
+            )
+        except FinancialsUnavailableError:
+            return None
 
     async def _extract_ocr_financials(
         self,

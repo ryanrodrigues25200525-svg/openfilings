@@ -26,6 +26,10 @@ COMPANY_REGISTRY_URL = (
 IPE_ARCHIVE_URL = (
     "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/IPE/DADOS/ipe_cia_aberta_{year}.zip"
 )
+STRUCTURED_ARCHIVE_URL = (
+    "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/{dataset_upper}/DADOS/"
+    "{dataset}_cia_aberta_{year}.zip"
+)
 COMPANY_DATASET_URL = "https://dados.cvm.gov.br/dataset/cia_aberta-cad"
 
 _CVM_CODE_PATTERN = re.compile(r"^\d{1,6}$")
@@ -33,6 +37,7 @@ _FILING_ID_PATTERN = re.compile(r"^\d+$")
 _MAX_REGISTRY_BYTES = 10 * 1024 * 1024
 _MAX_ARCHIVE_BYTES = 30 * 1024 * 1024
 _MAX_ARCHIVE_EXPANDED_BYTES = 150 * 1024 * 1024
+_MAX_STRUCTURED_ARCHIVE_BYTES = 60 * 1024 * 1024
 _FINANCIAL_TYPES = {
     "demonstracoes financeiras anuais completas": "annual",
     "demonstracoes financeiras intermediarias": "interim",
@@ -62,6 +67,7 @@ class CvmClient:
             headers={"User-Agent": "openfilings/0.15"},
         )
         self._companies: tuple[Company, ...] | None = None
+        self._structured_archives: dict[tuple[str, int], bytes | None] = {}
 
     async def __aenter__(self) -> CvmClient:
         return self
@@ -156,6 +162,38 @@ class CvmClient:
             data=data,
             media_type=media_type or "application/pdf",
             source_url=source_url,
+        )
+
+    async def structured_archive(self, dataset: str, year: int) -> bytes | None:
+        """Fetch CVM's Open Data DFP/ITR bulk dataset ZIP for one year.
+
+        Returns None if that year has no published archive (e.g. before
+        2010, or the current year before CVM has published it) rather than
+        raising, so callers can fall back to the PDF filing.
+        """
+
+        key = (dataset, year)
+        if key in self._structured_archives:
+            return self._structured_archives[key]
+        response = await self._request(
+            "GET",
+            self.structured_archive_url(dataset, year),
+            allow_not_found=True,
+        )
+        if response.status_code == 404:
+            self._structured_archives[key] = None
+            return None
+        if len(response.content) > _MAX_STRUCTURED_ARCHIVE_BYTES:
+            raise SourceError(
+                f"The CVM {dataset.upper()} archive for {year} is unexpectedly large."
+            )
+        self._structured_archives[key] = response.content
+        return response.content
+
+    @staticmethod
+    def structured_archive_url(dataset: str, year: int) -> str:
+        return STRUCTURED_ARCHIVE_URL.format(
+            dataset=dataset, dataset_upper=dataset.upper(), year=year
         )
 
     def matches_company_id(self, value: str) -> bool:
