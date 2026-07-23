@@ -590,6 +590,7 @@ def _line_items_from_text(
     years = _text_years(lines)
     if statement_type is None or not years:
         return ()
+    lines = _truncated_at_next_statement(lines, statement_type)
     header = "\n".join(lines[:30])
     currency = _currency(header) or _DEFAULT_CURRENCY_BY_SOURCE.get(filing.source)
     scale = _scale(header)
@@ -880,22 +881,70 @@ def _looks_like_note(value: Decimal, following: list[Decimal]) -> bool:
 
 
 def _statement_type(lines: tuple[str, ...]) -> StatementType | None:
-    # Most headings sit in the first 12 lines, but a two-column layout can
-    # place the title between an assets table and a liabilities table
-    # below it, further down the page. Beyond the first 12 lines, a match
-    # only counts if the heading starts the line - otherwise an incidental
-    # mention (e.g. "...as on the balance sheet date:" mid-sentence in a
-    # notes page) would misclassify prose as a statement page.
-    for index, line in enumerate(lines):
-        normalized_line = _normalize_label(line)
-        for statement_type, headings in _STATEMENT_HEADINGS.items():
-            for heading in headings:
-                normalized_heading = _normalize_label(heading)
-                if index < 12 and normalized_heading in normalized_line:
-                    return statement_type
-                if normalized_line.startswith(normalized_heading):
-                    return statement_type
+    for index in range(len(lines)):
+        match = _heading_at(lines, index)
+        if match is not None:
+            return match
     return None
+
+
+def _heading_at(lines: tuple[str, ...], index: int) -> StatementType | None:
+    """Match a heading starting at `index`, joining up to two following
+    lines first - PDF rendering can wrap a heading like "Consolidated
+    statement of changes in equity" across separate extracted lines.
+
+    Most headings sit in the first 12 lines, but a two-column layout can
+    place the title between an assets table and a liabilities table below
+    it, further down the page. Beyond the first 12 lines, a match only
+    counts if the heading starts the window and the window looks like a
+    heading rather than prose - otherwise an incidental sentence that
+    happens to open with the same words (e.g. "Balance sheet dates, any
+    protective rights...") would misclassify a notes page as a statement
+    page.
+    """
+    window = " ".join(lines[index : index + 3])
+    normalized_window = _normalize_label(window)
+    for statement_type, headings in _STATEMENT_HEADINGS.items():
+        for heading in headings:
+            normalized_heading = _normalize_label(heading)
+            if index < 12 and normalized_heading in normalized_window:
+                return statement_type
+            is_prefix = normalized_window.startswith(normalized_heading)
+            if is_prefix and _looks_like_heading(window, heading):
+                return statement_type
+    return None
+
+
+def _looks_like_heading(text: str, heading: str) -> bool:
+    """A genuine heading is short, and each of its words is capitalized in
+    the source text - unlike a sentence that merely opens with the same
+    words (only its first letter is capitalized as the sentence start)."""
+    if len(text.strip()) > 80:
+        return False
+    words = text.strip().split()
+    for word in words[: len(heading.split())]:
+        letters = [character for character in word if character.isalpha()]
+        if letters and not letters[0].isupper():
+            return False
+    return True
+
+
+def _truncated_at_next_statement(
+    lines: tuple[str, ...], own_type: StatementType
+) -> tuple[str, ...]:
+    """A continuation page can bundle a different statement onto the end
+    of this one (e.g. a Statement of Changes in Equity, a row-by-
+    transaction matrix, follows an Income Statement page). Its row labels
+    can reuse the same words with unrelated meaning (a "Net profit" row
+    whose columns are equity components, not fiscal years), so scanning
+    stops at the next different statement's heading rather than reading
+    its content under this statement's type.
+    """
+    for index in range(len(lines)):
+        match = _heading_at(lines, index)
+        if match is not None and match != own_type:
+            return lines[:index]
+    return lines
 
 
 def _text_years(lines: tuple[str, ...]) -> tuple[int, ...]:
@@ -955,6 +1004,10 @@ _DISQUALIFYING_SUFFIX_MARKERS = (
     # "Total Equity and Liabilities" is a grand total restating total
     # assets, not the equity line item alone.
     "and liabilities",
+    # "Total Assets of the Sponsored Structured Entities" is scoped to a
+    # narrow disclosure perimeter, not the entity's own total.
+    "of the",
+    "attributable to",
 )
 
 
@@ -972,9 +1025,22 @@ def _definition_for_label(label: str) -> LineItemDefinition | None:
     for code, aliases in _LINE_ITEM_ALIASES.items():
         for alias in aliases:
             normalized_alias = _normalize_label(alias)
-            is_prefix = normalized.startswith(f"{normalized_alias} ") or (
-                " " not in normalized_alias and normalized.startswith(normalized_alias)
-            )
+            if not normalized.startswith(normalized_alias):
+                continue
+            remainder = normalized[len(normalized_alias) :]
+            if " " in normalized_alias:
+                # A multi-word alias requires a space before any
+                # continuation (e.g. "Passivo circulante e nao
+                # circulante" - total liabilities - starting with
+                # "Passivo circulante" - current liabilities).
+                is_prefix = remainder.startswith(" ")
+            else:
+                # A single-word alias only accepts a directly-glued
+                # continuation (e.g. plural "Revenues"), never a new,
+                # space-separated word - otherwise any prose sentence
+                # starting with that word matches too (e.g. "Goodwill is
+                # reviewed on an annual basis...", "Revenue Reserves").
+                is_prefix = not remainder.startswith(" ")
             disqualified = _has_disqualifying_suffix(normalized, normalized_alias)
             if is_prefix and not disqualified:
                 return _DEFINITIONS[code]

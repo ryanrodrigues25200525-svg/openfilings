@@ -290,6 +290,26 @@ def test_definition_for_label_rejects_ratio_disclosures() -> None:
     assert _definition_for_label("Inventories").code == "inventory"
 
 
+def test_single_word_alias_requires_glued_continuation() -> None:
+    """A single-word alias (e.g. "revenue", "goodwill") must only match a
+    directly-glued continuation (a plural "s", a footnote digit) - a
+    space-separated continuation is a new word starting a different
+    concept or sentence, not a variant of the same value (Singapore's
+    Schedule-style disclosures: "Revenue Reserves" is an equity reserve,
+    not revenue; "Goodwill is reviewed on an annual basis..." is
+    accounting-policy prose, not a goodwill figure)."""
+    from openfilings.xbrl.pdf_statements import _definition_for_label
+
+    assert _definition_for_label("Revenue Reserves") is None
+    assert _definition_for_label("Goodwill is reviewed on an annual basis") is None
+    assert (
+        _definition_for_label("Total Assets of the Sponsored Structured Entities")
+        is None
+    )
+    assert _definition_for_label("Revenues").code == "revenue"
+    assert _definition_for_label("Goodwill").code == "goodwill"
+
+
 def test_financial_extractor_routes_pdf_documents_to_table_parser(monkeypatch) -> None:
     monkeypatch.setattr(
         "openfilings.xbrl.pdf_statements._pdf_statement_sections", lambda _: ()
