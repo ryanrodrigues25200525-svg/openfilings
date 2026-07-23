@@ -216,32 +216,58 @@ def _add_balance_sheet_totals(
 ) -> tuple[FinancialLineItem, ...]:
     by_code = {item.code: item for item in items}
     derived: list[FinancialLineItem] = []
-    for code, name, left_code, right_code in (
-        (
-            "total_assets",
-            "Total assets",
-            "current_assets",
-            "noncurrent_assets",
-        ),
-        (
-            "total_liabilities",
-            "Total liabilities",
-            "current_liabilities",
-            "noncurrent_liabilities",
-        ),
-    ):
-        if code in by_code or left_code not in by_code or right_code not in by_code:
-            continue
-        values = _sum_line_items(by_code[left_code], by_code[right_code])
+
+    def add_derived(item: FinancialLineItem) -> None:
+        derived.append(item)
+        by_code[item.code] = item
+
+    if "total_assets" not in by_code:
+        left, right = by_code.get("current_assets"), by_code.get("noncurrent_assets")
+        if left is not None and right is not None:
+            values = _sum_line_items(left, right)
+            if values:
+                add_derived(
+                    FinancialLineItem(
+                        code="total_assets",
+                        name="Total assets",
+                        concept="derived:current_assets+noncurrent_assets",
+                        values=values,
+                    )
+                )
+
+    if "total_liabilities" not in by_code:
+        # A filer that doesn't tag a bare "Liabilities" total can still tag
+        # current + non-current liabilities without covering every bucket
+        # (e.g. IFRS 5's "liabilities included in disposal groups classified
+        # as held for sale" sits outside both). Assets minus equity is
+        # always exactly right when both are available; current +
+        # non-current is a fallback for when they aren't.
+        assets, equity = by_code.get("total_assets"), by_code.get("total_equity")
+        values = (
+            _subtract_line_items(assets, equity)
+            if assets is not None and equity is not None
+            else ()
+        )
+        concept = "derived:total_assets-total_equity"
+        if not values:
+            left = by_code.get("current_liabilities")
+            right = by_code.get("noncurrent_liabilities")
+            values = (
+                _sum_line_items(left, right)
+                if left is not None and right is not None
+                else ()
+            )
+            concept = "derived:current_liabilities+noncurrent_liabilities"
         if values:
-            derived.append(
+            add_derived(
                 FinancialLineItem(
-                    code=code,
-                    name=name,
-                    concept=f"derived:{left_code}+{right_code}",
+                    code="total_liabilities",
+                    name="Total liabilities",
+                    concept=concept,
                     values=values,
                 )
             )
+
     return items + tuple(derived)
 
 
@@ -259,6 +285,29 @@ def _sum_line_items(
             left_value.model_copy(
                 update={
                     "value": left_value.value + right_value.value,
+                    "decimals": _less_precise(
+                        left_value.decimals, right_value.decimals
+                    ),
+                }
+            )
+        )
+    return tuple(combined)
+
+
+def _subtract_line_items(
+    left: FinancialLineItem,
+    right: FinancialLineItem,
+) -> tuple[FinancialValue, ...]:
+    right_values = {_financial_value_key(value): value for value in right.values}
+    combined: list[FinancialValue] = []
+    for left_value in left.values:
+        right_value = right_values.get(_financial_value_key(left_value))
+        if right_value is None or left_value.unit != right_value.unit:
+            continue
+        combined.append(
+            left_value.model_copy(
+                update={
+                    "value": left_value.value - right_value.value,
                     "decimals": _less_precise(
                         left_value.decimals, right_value.decimals
                     ),

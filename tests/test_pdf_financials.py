@@ -353,6 +353,32 @@ def test_aligned_pdf_text_does_not_bleed_into_equity_statement_row() -> None:
     ).values[0].value == Decimal("10934000000")
 
 
+def test_aligned_pdf_text_finds_unlabeled_subtotal_in_net_assets_presentation() -> None:
+    """A "net assets" style balance sheet ("Represented by: ... Non-current
+    liabilities" as a section header, its subtotal appearing several lines
+    later with no label of its own, directly followed by "Net assets" with
+    no textual separator) must not read "Net assets" itself as the
+    non-current liabilities total (they aren't the same figure), nor the
+    last individual breakdown item before the real, unlabeled subtotal."""
+    financials = extract_pdf_text_financials(
+        (_net_assets_style_balance_sheet_text(),),
+        _filing(period_end=date(2025, 12, 31), source="sgx", filing_type="annual"),
+        source_url="https://example.test/keppel-report.pdf",
+        sha256="j" * 64,
+    )
+
+    balance = financials.balance_sheet()
+    assert balance is not None
+    noncurrent_liabilities = next(
+        item for item in balance.line_items if item.code == "noncurrent_liabilities"
+    )
+    assert noncurrent_liabilities.values[0].value == Decimal("9500000")
+    total_equity = next(
+        item for item in balance.line_items if item.code == "total_equity"
+    )
+    assert total_equity.values[0].value == Decimal("9300000")
+
+
 def test_aligned_pdf_text_prefers_larger_total_when_periods_tie() -> None:
     """A note reusing a grand-total label ("Total assets") for a narrower
     scope (a structured entity, a subsidiary) can only describe a subset of
@@ -648,6 +674,77 @@ def _cvm_balance_sheet_text() -> str:
     Patrimonio liquido
     417.587
     367.514
+    """
+
+
+def _net_assets_style_balance_sheet_text() -> str:
+    return """
+    Balance Sheets
+    As at 31 December 2025
+    Group
+    Company
+    Note
+    2025
+    $'000
+    2024
+    $'000
+    2025
+    $'000
+    2024
+    $'000
+    Share capital & reserves
+    9,000
+    8,500
+    5,000
+    4,500
+    Total equity
+    9,300
+    8,700
+    5,200
+    4,700
+    Represented by:
+    Long term assets
+    17
+    18,000
+    19,000
+    7,000
+    7,500
+    Current assets
+    5,700
+    6,600
+    10,600
+    9,500
+    Current liabilities
+    4,900
+    4,700
+    1,800
+    1,400
+    Net current assets
+    800
+    1,900
+    8,800
+    8,100
+    Non-current liabilities
+    Term loans
+    25
+    9,400
+    10,500
+    8,400
+    8,100
+    Lease liabilities
+    100
+    130
+    -
+    -
+    9,500
+    11,461
+    8,647
+    8,240
+    Net assets
+    9,300
+    8,700
+    5,200
+    4,700
     """
 
 

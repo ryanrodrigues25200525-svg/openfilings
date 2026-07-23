@@ -274,6 +274,7 @@ _LINE_ITEM_ALIASES: dict[str, tuple[str, ...]] = {
     ),
     "total_equity": (
         "total equity",
+        "net assets",
         "shareholders equity",
         "patrimonio liquido",
         "total patrimonio",
@@ -937,7 +938,28 @@ def _breakdown_aligned_numbers(
             candidate = candidate[split:]
     if len(candidate) < period_count:
         return ()
-    return tuple(candidate[:period_count])
+    if len(candidate) == period_count:
+        return tuple(candidate)
+    # Multiple rows can end up merged into one run when an unlabeled total
+    # directly follows the last breakdown item with no textual separator at
+    # all (not even a footnote digit _footnote_split could anchor on). A
+    # genuine total is, by definition, the sum of the items before it, so
+    # it's the largest-magnitude group of period_count consecutive values -
+    # unlike a plain footnote lead, which _footnote_split already handles.
+    return _largest_magnitude_window(candidate, period_count)
+
+
+def _largest_magnitude_window(
+    candidate: list[Decimal], period_count: int
+) -> tuple[Decimal, ...]:
+    best = candidate[:period_count]
+    best_magnitude = sum(abs(value) for value in best)
+    for start in range(1, len(candidate) - period_count + 1):
+        window = candidate[start : start + period_count]
+        magnitude = sum(abs(value) for value in window)
+        if magnitude > best_magnitude:
+            best, best_magnitude = window, magnitude
+    return tuple(best)
 
 
 def _footnote_split(candidate: list[Decimal], period_count: int) -> int | None:

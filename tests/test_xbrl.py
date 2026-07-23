@@ -57,6 +57,39 @@ def test_inline_xbrl_builds_normalized_statements() -> None:
     assert investing.values[0].value == Decimal("-210000")
 
 
+def test_total_liabilities_prefers_assets_minus_equity_derivation() -> None:
+    """A filer that doesn't tag a bare "Liabilities" total (only current and
+    non-current) can still have a liability bucket outside both (e.g. IFRS
+    5's "liabilities included in disposal groups classified as held for
+    sale"). Summing current + non-current would then be too small - assets
+    minus equity is always exactly right when both are directly tagged."""
+    old = (
+        b'<ix:nonFraction name="ifrs-full:Liabilities" contextRef="instant-current"\n'
+        b'          unitRef="GBP" decimals="-3" scale="3">3,000</ix:nonFraction>'
+    )
+    new = (
+        b'<ix:nonFraction name="ifrs-full:CurrentLiabilities"'
+        b' contextRef="instant-current"\n'
+        b'          unitRef="GBP" decimals="-3" scale="3">1,000</ix:nonFraction>'
+        b'<ix:nonFraction name="ifrs-full:NoncurrentLiabilities"'
+        b' contextRef="instant-current"\n'
+        b'          unitRef="GBP" decimals="-3" scale="3">1,500</ix:nonFraction>'
+    )
+    report = _ixbrl().replace(old, new)
+    assert new in report and old not in report
+
+    financials = extract_filing_financials(_document(report), _filing())
+
+    balance = financials.balance_sheet()
+    assert balance is not None
+    by_code = {item.code: item for item in balance.line_items}
+    total_liabilities = by_code["total_liabilities"]
+    assert total_liabilities.concept == "derived:total_assets-total_equity"
+    # Assets (5,000) minus equity (2,000) = 3,000 - not current (1,000) +
+    # non-current (1,500) = 2,500, which would silently miss 500.
+    assert total_liabilities.values[0].value == Decimal("3000000")
+
+
 def test_eu_comma_decimal_transform_and_zip_package() -> None:
     report = _ixbrl().replace(
         b'decimals="2">\n          0.42',
