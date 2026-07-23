@@ -319,6 +319,59 @@ def test_definition_for_label_rejects_total_pasivos_y_patrimonio() -> None:
     assert _definition_for_label("Total Pasivos").code == "total_liabilities"
 
 
+def test_number_rejects_page_footer_and_note_reference_text() -> None:
+    """A page footer ("DBS Annual Report 2025 ... Financial statements 115")
+    or a stray note reference ("Note 27") carries a real word alongside an
+    embedded digit. Stripping every non-numeric character before parsing
+    would otherwise turn that digit into a false numeric value."""
+    from openfilings.xbrl.pdf_statements import _number
+
+    assert _number("DBS Annual Report 2025 A beacon of stability") is None
+    assert _number("Note 27") is None
+    assert _number("114") == Decimal("114")
+    assert _number("(1,234)") == Decimal("-1234")
+
+
+def test_aligned_pdf_text_does_not_bleed_into_equity_statement_row() -> None:
+    """A "Net profit" row inside the Statement of Changes in Equity (whose
+    columns are equity components, not fiscal years, and whose heading is
+    set in sentence case: "Consolidated statement of changes in equity")
+    must not overwrite the income statement's own "Net profit" row, and a
+    bare page number reachable only past a run of footnote prose must never
+    be read as a value."""
+    financials = extract_pdf_text_financials(
+        (_income_statement_followed_by_equity_statement_text(),),
+        _filing(period_end=date(2025, 12, 31), source="sgx", filing_type="annual"),
+        source_url="https://example.test/dbs-report.pdf",
+        sha256="h" * 64,
+    )
+
+    income = financials.income_statement()
+    assert income is not None
+    assert next(
+        item for item in income.line_items if item.code == "net_income_loss"
+    ).values[0].value == Decimal("10934000000")
+
+
+def test_aligned_pdf_text_prefers_larger_total_when_periods_tie() -> None:
+    """A note reusing a grand-total label ("Total assets") for a narrower
+    scope (a structured entity, a subsidiary) can only describe a subset of
+    the entity's real total. When two sections' candidates tie on period
+    count, the larger one is the real consolidated figure."""
+    financials = extract_pdf_text_financials(
+        (_note_scoped_total_assets_text(), _consolidated_balance_sheet_text()),
+        _filing(period_end=date(2025, 12, 31), source="sgx", filing_type="annual"),
+        source_url="https://example.test/dbs-report.pdf",
+        sha256="i" * 64,
+    )
+
+    balance = financials.balance_sheet()
+    assert balance is not None
+    assert next(
+        item for item in balance.line_items if item.code == "total_assets"
+    ).values[0].value == Decimal("897488000000")
+
+
 def test_single_word_alias_requires_glued_continuation() -> None:
     """A single-word alias (e.g. "revenue", "goodwill") must only match a
     directly-glued continuation (a plural "s", a footnote digit) - a
@@ -595,6 +648,110 @@ def _cvm_balance_sheet_text() -> str:
     Patrimonio liquido
     417.587
     367.514
+    """
+
+
+def _income_statement_followed_by_equity_statement_text() -> str:
+    return """
+    Consolidated income statement
+    for the year ended 31 December 2025
+    In $ millions
+    2025
+    2024
+    Profit before tax
+    12,999
+    12,884
+    Income tax expense
+    2,065
+    1,594
+    Net profit
+    10,934
+    11,290
+    Consolidated statement of changes in equity
+    for the year ended 31 December 2025
+    The Group
+    Share capital
+    Other reserves
+    Retained earnings
+    Attributable to shareholders
+    Total shareholders' funds
+    Non-controlling interests
+    Total
+    Balance at 1 January
+    -
+    -
+    -
+    -
+    -
+    -
+    -
+    Net profit
+    -
+    -
+    -
+    11,289
+    11,289
+    1
+    11,290
+    Other comprehensive income
+    -
+    -
+    1,689
+    (118)
+    1,571
+    (1)
+    1,570
+    Balance at 31 December
+    11,537
+    2,392
+    1,694
+    53,163
+    68,786
+    47
+    68,833
+    (a) Includes distributions paid on capital securities classified
+    as equity and Capital Return dividends declared in the year
+    (see notes on pages 118 to 169 as well as the Risk Management
+    section which form part of these financial statements)
+    DBS Annual Report 2025 A beacon of stability
+    114
+    115
+    Financial statements
+    """
+
+
+def _note_scoped_total_assets_text() -> str:
+    return """
+    Notes to the Financial Statements
+    24. Interests in Structured Entities
+    In $ millions
+    2025
+    2024
+    Goodwill
+    41
+    39
+    Total assets
+    6,178
+    5,666
+    Total assets of the sponsored structured entities
+    3,159
+    1,114
+    """
+
+
+def _consolidated_balance_sheet_text() -> str:
+    return """
+    Consolidated balance sheet
+    as at 31 December 2025
+    In $ millions
+    2025
+    2024
+    Goodwill
+    6,139
+    6,171
+    Total assets
+    897,488
+    827,219
     """
 
 

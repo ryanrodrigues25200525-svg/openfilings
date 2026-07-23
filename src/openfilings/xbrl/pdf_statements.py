@@ -24,6 +24,18 @@ from openfilings.xbrl.mappings import LINE_ITEMS, LineItemDefinition
 _YEAR_PATTERN = re.compile(r"\b(20\d{2})\b")
 _DIVIDER_CELL_PATTERN = re.compile(r"^:?-{2,}:?$")
 _FOOTNOTE_PATTERN = re.compile(r"(?:\s|\*)+(?:note\s*)?\d+[a-z]?$", re.IGNORECASE)
+_WORD_PATTERN = re.compile(r"[^\W\d_]{2,}", re.UNICODE)
+_PLACEHOLDER_CELL_VALUES = frozenset(
+    {"-", "\N{EM DASH}", "\N{EN DASH}", "n/a", "nm"}
+)
+# A row's own values sit within a short, contiguous run of lines after its
+# label. A run of prose this long (footnotes, a page footer) means the scan
+# has left the statement - a number found beyond it is not this row's value.
+_MAX_CONSECUTIVE_NON_NUMERIC_LINES = 2
+# A grand total describes the entity's full scope - a note reusing the same
+# label (e.g. a structured-entity or subsidiary disclosure) can only be a
+# subset of it, never larger.
+_SCOPE_SUPERSET_CODES = frozenset({"total_assets", "total_liabilities", "total_equity"})
 _NON_LABEL_PATTERN = re.compile(r"[^\w\s]+", re.UNICODE)
 _WHITESPACE_PATTERN = re.compile(r"\s+")
 # Indian lakh/crore grouping (e.g. "2,57,935" or "10,22,401"): the last
@@ -388,6 +400,7 @@ _STATEMENT_HEADINGS: dict[StatementType, tuple[str, ...]] = {
         "其他綜合損益",
     ),
     "changes_in_equity": (
+        "consolidated statement of changes in equity",
         "statement of changes in equity",
         "demonstracao das mutacoes do patrimonio liquido",
         "estado de cambios en el patrimonio",
@@ -470,6 +483,18 @@ def extract_pdf_text_financials(
         for item in section_items:
             previous = selected.get(item.code)
             if previous is None or len(item.values) > len(previous.values):
+                selected[item.code] = item
+            elif (
+                len(item.values) == len(previous.values)
+                and item.code in _SCOPE_SUPERSET_CODES
+                and _magnitude(item.values) > _magnitude(previous.values)
+            ):
+                # A grand total ("Total assets", "Total liabilities",
+                # "Total equity") is definitionally the entity's full
+                # scope - a note reusing the same label for a narrower
+                # disclosure (a subsidiary, a structured entity) can only
+                # describe a subset of it. When two candidates tie on
+                # period count, the larger one is the real total.
                 selected[item.code] = item
     statements = _statements(tuple(selected.values()))
     if not statements:
@@ -711,6 +736,10 @@ def _all_zero(values: tuple[FinancialValue, ...]) -> bool:
     return all(value.value == 0 for value in values)
 
 
+def _magnitude(values: tuple[FinancialValue, ...]) -> Decimal:
+    return sum((abs(value.value) for value in values), start=Decimal(0))
+
+
 def _table_format(table: _MarkdownTable) -> _TableFormat | None:
     header = max(table.rows[:4], key=_year_cell_count)
     period_columns: list[tuple[int, int]] = []
@@ -820,6 +849,7 @@ def _aligned_numbers(
     first_line = window[0] if window else None
     leads_with_text = (
         first_line is not None
+        and not _is_placeholder_cell(first_line)
         and _number(first_line) is None
         and _definition_for_label(first_line) is None
     )
@@ -828,13 +858,32 @@ def _aligned_numbers(
             lines[start : start + 40], period_count, definition
         )
     numbers: list[Decimal] = []
+    consecutive_non_numeric = 0
     for line in window:
         next_definition = _definition_for_label(line)
         if next_definition is not None and next_definition.code != definition.code:
             break
         number = _number(line)
         if number is not None:
+            consecutive_non_numeric = 0
             numbers.append(number)
+            if len(numbers) > period_count:
+                # One extra number beyond period_count is kept only to let
+                # the footnote-marker check below strip a leading footnote
+                # digit - anything past that is a later, unrelated row, not
+                # this one's own values.
+                break
+            continue
+        if _is_placeholder_cell(line):
+            continue
+        consecutive_non_numeric += 1
+        if consecutive_non_numeric >= _MAX_CONSECUTIVE_NON_NUMERIC_LINES:
+            # Two or more lines in a row that are neither a number, a blank
+            # placeholder cell, nor a recognized label mean the scan has
+            # wandered out of the statement and into footnote prose or a
+            # page footer - a number found beyond that point (e.g. a bare
+            # page number) is not this row's value.
+            break
     if len(numbers) > period_count and _looks_like_note(numbers[0], numbers[1:]):
         numbers.pop(0)
     if len(numbers) < period_count:
@@ -854,6 +903,7 @@ def _breakdown_aligned_numbers(
     first run found.
     """
     runs: list[list[Decimal]] = [[]]
+    consecutive_non_numeric = 0
     for line in window:
         next_definition = _definition_for_label(line)
         if next_definition is not None and next_definition.code != definition.code:
@@ -862,7 +912,16 @@ def _breakdown_aligned_numbers(
         if number is None:
             if runs[-1]:
                 runs.append([])
+            if _is_placeholder_cell(line):
+                continue
+            consecutive_non_numeric += 1
+            if consecutive_non_numeric >= _MAX_CONSECUTIVE_NON_NUMERIC_LINES:
+                # See _aligned_numbers: a run of prose this long means the
+                # scan has left the statement (footnotes, a page footer),
+                # so no later run of numbers belongs to this row.
+                break
             continue
+        consecutive_non_numeric = 0
         runs[-1].append(number)
     runs = [run for run in runs if run]
     if not runs:
@@ -935,18 +994,39 @@ def _heading_at(lines: tuple[str, ...], index: int) -> StatementType | None:
             if index < 12 and normalized_heading in normalized_window:
                 return statement_type
             is_prefix = normalized_window.startswith(normalized_heading)
-            if is_prefix and _looks_like_heading(window, heading):
+            if not is_prefix:
+                continue
+            if _looks_like_heading(window, heading) or _followed_by_period_marker(
+                normalized_window, normalized_heading
+            ):
                 return statement_type
     return None
+
+
+def _followed_by_period_marker(normalized_window: str, normalized_heading: str) -> bool:
+    """A genuine statement heading is immediately followed by its reporting
+    period ("for the year ended ...", "as at ..."). Some filers set
+    headings in sentence case ("Consolidated statement of changes in
+    equity") rather than title case, which _looks_like_heading cannot tell
+    apart from a prose sentence that happens to open with the same words -
+    but a prose sentence is never followed by this exact formulaic phrase."""
+    remainder = normalized_window[len(normalized_heading) :].strip()
+    return remainder.startswith(("for the year", "for the period", "as at", "as of"))
 
 
 def _looks_like_heading(text: str, heading: str) -> bool:
     """A genuine heading is short, and each of its words is capitalized in
     the source text - unlike a sentence that merely opens with the same
-    words (only its first letter is capitalized as the sentence start)."""
-    if len(text.strip()) > 80:
-        return False
+    words (only its first letter is capitalized as the sentence start).
+
+    The length check only covers the words the heading itself needs, not
+    the full lookahead window - a heading is routinely followed on the same
+    joined window by a "for the year ended ..." subtitle line, which would
+    otherwise push a perfectly short heading over the threshold."""
     words = text.strip().split()
+    heading_span = " ".join(words[: len(heading.split())])
+    if len(heading_span) > 80:
+        return False
     for word in words[: len(heading.split())]:
         letters = [character for character in word if character.isalpha()]
         if letters and not letters[0].isupper():
@@ -1154,15 +1234,27 @@ def _row_label(cells: tuple[str, ...]) -> str:
     return ""
 
 
+def _is_placeholder_cell(value: str) -> bool:
+    """A blank/not-applicable table cell (e.g. "-" for a zero or n/a
+    column), not prose - it shouldn't count as leaving the statement the
+    way real footnote or footer text does."""
+    clean = value.strip().replace("\u00a0", " ")
+    return not clean or clean.casefold() in _PLACEHOLDER_CELL_VALUES
+
+
 def _number(value: str) -> Decimal | None:
     clean = value.strip().replace("\u00a0", " ")
-    if not clean or clean.casefold() in {
-        "-",
-        "\N{EM DASH}",
-        "\N{EN DASH}",
-        "n/a",
-        "nm",
-    }:
+    if not clean or clean.casefold() in _PLACEHOLDER_CELL_VALUES:
+        return None
+    if _WORD_PATTERN.search(clean) is not None:
+        # A page header/footer ("DBS Annual Report 2025 ... 115") or a
+        # stray note reference ("Note 27") carries a real word alongside
+        # an embedded digit. Stripping every non-numeric character would
+        # otherwise turn that digit into a false "value" for whatever row
+        # a forward scan happens to be looking for. A genuine numeric cell
+        # never contains a run of letters this long (currency symbols and
+        # single-letter unit suffixes are one character, footnote markers
+        # like "(a)" are parenthesized).
         return None
     negative = clean.startswith("(") and clean.endswith(")")
     clean = clean.strip("() ").replace(" ", "").replace("'", "")
