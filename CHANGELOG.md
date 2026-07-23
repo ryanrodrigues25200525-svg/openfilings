@@ -16,6 +16,14 @@ All notable changes to OpenFilings are documented in this file.
   filing's other statements. The income statement still comes from the PDF,
   since CUIF reports income/expense accounts unclosed for supervisory
   purposes - even at year-end, revenue exactly equals expenses.
+- India now reads NSE's "Integrated Filing - Financials" XBRL directly -
+  the exclusive format for SEBI Regulation 33 financial results since April
+  2025, when PDF submission was discontinued - instead of parsing the
+  annual-report PDF. Reuses the existing tagged-XBRL statement pipeline
+  entirely: the taxonomy's concept names already match the standard IFRS
+  concepts recognized elsewhere. Falls back to the PDF annual report if no
+  audited filing covers the exact fiscal year-end. Verified against
+  Reliance Industries and Tata Consultancy Services.
 
 ### Fixed
 
@@ -34,6 +42,14 @@ All notable changes to OpenFilings are documented in this file.
   longer wins over the real consolidated total when both candidates tie on
   period count - the larger value is preferred, since a note's total can
   only be a subset of the entity's real total.
+- Tagged-XBRL financials (any inline-XBRL market: UK-GAAP, ESEF, JP-GAAP,
+  and now India): when a filer tags both a full total (e.g. "Equity") and a
+  narrower component with identical period/context coverage (e.g.
+  "EquityAttributableToOwnersOfParent", excluding non-controlling
+  interests), the concept selection previously fell back to an arbitrary
+  tie-break and could silently pick the narrower one, breaking the
+  balance-sheet identity. The alias list's own order (the full total listed
+  first) now breaks the tie.
 
 - PDF-derived financials: a labeled row followed by an unlabeled sub-item
   breakdown (no repeated "Total X" line) no longer misattributes the first

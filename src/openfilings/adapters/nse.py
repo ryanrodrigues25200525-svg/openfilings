@@ -22,10 +22,18 @@ LANDING_URL = (
 )
 COMPANY_REGISTRY_URL = "https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv"
 ANNUAL_REPORTS_URL = "https://www.nseindia.com/api/annual-reports"
+# Since April 2025, SEBI Regulation 33 financial results are filed exclusively
+# as "Integrated Filing - Financials" XBRL (PDF submission was discontinued);
+# this is a separate regulatory filing from the glossy annual-report PDF above.
+INTEGRATED_FILING_LANDING_URL = (
+    "https://www.nseindia.com/companies-listing/corporate-integrated-filing"
+)
+INTEGRATED_FILING_URL = "https://www.nseindia.com/api/integrated-filing-results"
 
 _ALLOWED_SERIES = {"EQ", "BE", "BZ"}
 _ARCHIVE_HOST = "nsearchives.nseindia.com"
 _MAX_REGISTRY_BYTES = 5 * 1024 * 1024
+_QE_DATE_FORMAT = "%d-%b-%Y"
 
 
 class NseClient(RetryingClient):
@@ -139,6 +147,84 @@ class NseClient(RetryingClient):
                 "NSE returned an HTML error page instead of an annual report."
             )
         return SourceDocument(data=data, media_type=media_type, source_url=source_url)
+
+    async def integrated_filing_xbrl(
+        self, symbol: str, period_end: date
+    ) -> tuple[bytes, str] | None:
+        """Fetch the "Integrated Filing - Financials" XBRL document for one
+        symbol and fiscal-year-end. Returns None if there is no audited
+        filing for that exact period, so callers can fall back to the PDF
+        annual report."""
+
+        await self._prepare_session()
+        response = await self._request(
+            "GET",
+            INTEGRATED_FILING_URL,
+            params={
+                "index": "equities",
+                "symbol": symbol,
+                "period_ended": "all",
+                "type": "Integrated Filing- Financials",
+                "page": 1,
+                "size": 50,
+            },
+            headers={
+                "Referer": INTEGRATED_FILING_LANDING_URL,
+                "Accept": "application/json,text/plain,*/*",
+            },
+        )
+        try:
+            rows = response.json().get("data", [])
+        except (ValueError, AttributeError) as exc:
+            raise SourceError(
+                "NSE returned an invalid Integrated Filing response."
+            ) from exc
+        if not isinstance(rows, list):
+            raise SourceError("NSE returned an invalid Integrated Filing response.")
+        row = self._best_integrated_filing_row(rows, period_end)
+        if row is None:
+            return None
+        xbrl_url = str(row.get("xbrl", "")).strip()
+        if not xbrl_url or not xbrl_url.startswith(f"https://{_ARCHIVE_HOST}/"):
+            return None
+        document = await self._request(
+            "GET", xbrl_url, headers={"Referer": LANDING_URL}
+        )
+        return (document.content, xbrl_url) if document.content else None
+
+    @staticmethod
+    def _best_integrated_filing_row(
+        rows: list[object], period_end: date
+    ) -> dict[str, object] | None:
+        candidates = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            try:
+                qe_date = datetime.strptime(
+                    str(row.get("qe_Date", "")).strip(), _QE_DATE_FORMAT
+                ).date()
+            except ValueError:
+                continue
+            if qe_date != period_end:
+                continue
+            if str(row.get("type_Sub", "")).strip().casefold() not in {
+                "original",
+                "revision",
+            }:
+                continue
+            candidates.append(row)
+        if not candidates:
+            return None
+        candidates.sort(
+            key=lambda row: (
+                str(row.get("consolidated", "")).strip().casefold()
+                == "consolidated",
+                str(row.get("audited", "")).strip().casefold() == "audited",
+            ),
+            reverse=True,
+        )
+        return candidates[0]
 
     def matches_company_id(self, value: str) -> bool:
         return value.casefold().startswith("in_nse_")

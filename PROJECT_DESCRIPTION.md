@@ -227,13 +227,17 @@ The most important known constraints are:
 - an EDINET key is required to retrieve Japanese filing history and documents;
 - SEDAR+ filing discovery remains a manual browser step;
 - ESEF coverage can lag the underlying national regulator;
-- PDF statement extraction (still the only path for India, Singapore, Peru,
-  and Mexico's PDF-only annual report) is heuristic and intentionally
-  refuses low-confidence normalization - Brazil (CVM's Open Data DFP/ITR
-  datasets) and Colombia's balance sheet (SFC's CUIF supervisory dataset on
-  datos.gov.co) are exceptions, read directly instead of parsed from PDF.
-  Colombia's income statement still comes from the PDF filing, since CUIF
-  reports income/expense accounts unclosed for supervisory purposes; and
+- PDF statement extraction (still the only path for Singapore, Peru, and
+  Mexico's PDF-only annual report) is heuristic and intentionally refuses
+  low-confidence normalization. Brazil (CVM's Open Data DFP/ITR datasets),
+  India (NSE's Integrated Filing XBRL, the exclusive format for SEBI
+  Regulation 33 financial results since April 2025), and Colombia's balance
+  sheet (SFC's CUIF supervisory dataset on datos.gov.co) are exceptions,
+  read directly instead of parsed from PDF. Colombia's income statement
+  still comes from the PDF filing, since CUIF reports income/expense
+  accounts unclosed for supervisory purposes. Singapore has no accessible
+  structured alternative - SGX-listed companies are explicitly excluded
+  from ACRA's XBRL filing requirement; and
 - remote HTTP MCP hosting and authentication are outside the current scope.
 
 ## Repository guide

@@ -61,6 +61,7 @@ from openfilings.resources import (
 from openfilings.storage.sqlite import SQLiteCache
 from openfilings.xbrl import extract_filing_financials
 from openfilings.xbrl.cvm_structured import extract_cvm_structured_financials
+from openfilings.xbrl.extract import extract_nse_integrated_filing_financials
 from openfilings.xbrl.pdf_statements import extract_pdf_ocr_financials
 from openfilings.xbrl.sfc_cuif_structured import extract_sfc_cuif_balance_sheet
 
@@ -665,6 +666,13 @@ class OpenFilingsService:
                 self._enforce_cache_limit()
                 return structured
 
+        if filing.source == "nse":
+            structured = await self._extract_nse_structured_financials(filing)
+            if structured is not None:
+                self._cache.put_financials(structured)
+                self._enforce_cache_limit()
+                return structured
+
         cuif_balance_sheet = (
             await self._extract_sfc_cuif_balance_sheet(filing)
             if filing.source == "sfc"
@@ -799,6 +807,43 @@ class OpenFilingsService:
                     dataset, filing.period_end.year
                 ),
                 sha256=digest,
+            )
+        except FinancialsUnavailableError:
+            return None
+
+    async def _extract_nse_structured_financials(
+        self, filing: Filing
+    ) -> FilingFinancials | None:
+        """Prefer NSE's Integrated Filing - Financials XBRL over the annual-
+        report PDF - since April 2025 it's the only format SEBI Regulation
+        33 financial results are filed in (PDF submission was
+        discontinued), and its taxonomy already matches the standard IFRS
+        concepts this codebase recognizes elsewhere. Falls back to None
+        (letting the caller use the PDF annual report) if no audited filing
+        covers this exact fiscal-year-end."""
+
+        nse = self._market_sources_by_name.get("nse")
+        if not isinstance(nse, NseClient) or filing.period_end is None:
+            return None
+        match = re.fullmatch(r"in_nse_([A-Za-z0-9&-]{1,30})", filing.company_id, re.I)
+        if match is None:
+            return None
+        try:
+            result = await nse.integrated_filing_xbrl(
+                match.group(1), filing.period_end
+            )
+        except SourceError:
+            return None
+        if result is None:
+            return None
+        data, source_url = result
+        try:
+            return await asyncio.to_thread(
+                extract_nse_integrated_filing_financials,
+                data,
+                filing,
+                source_url=source_url,
+                sha256=hashlib.sha256(data).hexdigest(),
             )
         except FinancialsUnavailableError:
             return None

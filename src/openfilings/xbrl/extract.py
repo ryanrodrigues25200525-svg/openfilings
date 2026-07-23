@@ -23,7 +23,12 @@ from openfilings.models import (
     ReportingPeriod,
     StatementType,
 )
-from openfilings.xbrl.mappings import LINE_ITEMS, definition_for_concept
+from openfilings.xbrl.mappings import (
+    LINE_ITEMS,
+    _normalize_concept,
+    definition_for_concept,
+)
+from openfilings.xbrl.nse_xbrl_parser import parse_nse_xbrl_instance
 from openfilings.xbrl.parser import ParsedXbrl, XbrlContext, XbrlFact, parse_inline_xbrl
 from openfilings.xbrl.pdf_statements import (
     extract_pdf_source_financials,
@@ -95,6 +100,40 @@ def extract_filing_financials(
     )
 
 
+def extract_nse_integrated_filing_financials(
+    data: bytes,
+    filing: Filing,
+    *,
+    source_url: str,
+    sha256: str,
+) -> FilingFinancials:
+    """Return standardized statements from an NSE Integrated Filing - the
+    XBRL document SEBI Regulation 33 financial results have been filed in
+    exclusively since April 2025 (PDF submission was discontinued)."""
+
+    parsed = parse_nse_xbrl_instance(data)
+    statements = _build_statements(parsed)
+    if not statements:
+        raise FinancialsUnavailableError(
+            "The NSE Integrated Filing XBRL document has no supported "
+            "statement facts."
+        )
+    return FilingFinancials(
+        filing_id=filing.id,
+        company_id=filing.company_id,
+        source_url=source_url,
+        extraction_method="nse-integrated-filing-xbrl",
+        statements=statements,
+        fact_count=sum(
+            len(item.values)
+            for statement in statements
+            for item in statement.line_items
+        ),
+        taxonomy_namespaces=parsed.taxonomy_namespaces,
+        sha256=sha256,
+    )
+
+
 def _inline_report(document: SourceDocument, filing: Filing) -> bytes:
     media_type = document.media_type.casefold()
     if media_type in _ZIP_TYPES or document.data.startswith(b"PK\x03\x04"):
@@ -129,7 +168,9 @@ def _build_statements(parsed: ParsedXbrl) -> tuple[FinancialStatement, ...]:
             continue
         concept, facts = max(
             concepts.items(),
-            key=lambda item: _concept_score(item[0], item[1], parsed),
+            key=lambda item: _concept_score(
+                item[0], item[1], parsed, definition.concepts
+            ),
         )
         selected = _preferred_context_facts(facts, parsed.contexts)
         values = tuple(
@@ -244,7 +285,8 @@ def _concept_score(
     concept: str,
     facts: list[XbrlFact],
     parsed: ParsedXbrl,
-) -> tuple[int, int, int, int]:
+    aliases: tuple[str, ...],
+) -> tuple[int, int, int, int, int]:
     contexts = [
         parsed.contexts[fact.context_ref]
         for fact in facts
@@ -259,7 +301,22 @@ def _concept_score(
     )
     prefix = concept.split(":", 1)[0].casefold() if ":" in concept else ""
     standard = int(prefix in _STANDARD_PREFIXES)
-    return dimensionless, unique_periods, standard, len(facts)
+    # When two tagged concepts otherwise tie (e.g. a filer tags both "Equity"
+    # and "EquityAttributableToOwnersOfParent" with identical period/context
+    # coverage), the alias list's own order is the tie-break: an earlier
+    # alias is deliberately the more general, preferred concept (the full
+    # total, not a component excluding non-controlling interests).
+    local_name = concept.rsplit(":", 1)[-1]
+    normalized = _normalize_concept(local_name)
+    alias_rank = next(
+        (
+            len(aliases) - index
+            for index, alias in enumerate(aliases)
+            if _normalize_concept(alias) == normalized
+        ),
+        0,
+    )
+    return dimensionless, unique_periods, standard, len(facts), alias_rank
 
 
 def _preferred_context_facts(
