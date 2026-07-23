@@ -171,6 +171,30 @@ def test_aligned_pdf_text_builds_group_financial_statements() -> None:
     ).values[0].value == Decimal("841670000")
 
 
+def test_aligned_pdf_text_finds_total_behind_unlabeled_segment_breakdown() -> None:
+    """Revenue can be broken down by segment with no repeated "Total revenue"
+    label before its own total row appears - the total must not be confused
+    with the first segment's own values."""
+    financials = extract_pdf_text_financials(
+        (_hkex_income_text(),),
+        _filing(period_end=date(2024, 12, 31), source="hkex", filing_type="annual"),
+        source_url="https://example.test/hkex-report.pdf",
+        sha256="f" * 64,
+    )
+
+    income = financials.income_statement()
+    assert income is not None
+    assert next(
+        item for item in income.line_items if item.code == "revenue"
+    ).values[0].value == Decimal("660257000000")
+    assert next(
+        item for item in income.line_items if item.code == "cost_of_revenue"
+    ).values[0].value == Decimal("-311011000000")
+    assert next(
+        item for item in income.line_items if item.code == "gross_profit"
+    ).values[0].value == Decimal("349246000000")
+
+
 def test_financial_extractor_routes_pdf_documents_to_table_parser(monkeypatch) -> None:
     monkeypatch.setattr(
         "openfilings.xbrl.pdf_statements._pdf_statement_sections", lambda _: ()
@@ -329,6 +353,42 @@ def _english_report() -> str:
     | --- | ---: | ---: |
     | Net cash from operating activities | 450 | 400 |
     | Net cash used in investing activities | (210) | (180) |
+    """
+
+
+def _hkex_income_text() -> str:
+    return """
+    Consolidated Income Statement
+    For the year ended 31 December 2024
+    Year ended 31 December
+    2024
+    2023
+    Note
+    RMB'Million
+    RMB'Million
+    Revenues
+    Value-added Services
+    319,168
+    298,375
+    Marketing Services
+    121,374
+    101,482
+    FinTech and Business Services
+    211,956
+    203,763
+    Others
+    7,759
+    5,395
+    6
+    660,257
+    609,015
+    Cost of revenues
+    7
+    (311,011)
+    (315,906)
+    Gross profit
+    349,246
+    293,109
     """
 
 

@@ -54,6 +54,7 @@ _LINE_ITEM_ALIASES: dict[str, tuple[str, ...]] = {
     ),
     "cost_of_revenue": (
         "cost of revenue",
+        "cost of revenues",
         "cost of sales",
         "custo das vendas",
         "costo de ventas",
@@ -759,8 +760,28 @@ def _aligned_numbers(
     period_count: int,
     definition: LineItemDefinition,
 ) -> tuple[Decimal, ...]:
+    window = lines[start : start + 14]
+    # Normally a row's own values sit directly on the lines right after its
+    # label (a footnote digit may lead them), so the first period_count
+    # numbers found are correct and scanning should not chase later,
+    # unrelated rows. But when the label is immediately followed by
+    # unlabeled sub-item text (e.g. "Revenues" broken down by segment with
+    # no repeated "Total revenue" line), the row's own total instead sits
+    # in the run of numbers closest to the next recognized line item. A
+    # breakdown can span more lines than a plain row, so it gets a larger
+    # scan window to still reach its own total.
+    first_line = window[0] if window else None
+    leads_with_text = (
+        first_line is not None
+        and _number(first_line) is None
+        and _definition_for_label(first_line) is None
+    )
+    if leads_with_text:
+        return _breakdown_aligned_numbers(
+            lines[start : start + 40], period_count, definition
+        )
     numbers: list[Decimal] = []
-    for line in lines[start : start + 14]:
+    for line in window:
         next_definition = _definition_for_label(line)
         if next_definition is not None and next_definition.code != definition.code:
             break
@@ -772,6 +793,61 @@ def _aligned_numbers(
     if len(numbers) < period_count:
         return ()
     return tuple(numbers[:period_count])
+
+
+def _breakdown_aligned_numbers(
+    window: tuple[str, ...],
+    period_count: int,
+    definition: LineItemDefinition,
+) -> tuple[Decimal, ...]:
+    """Resolve a label followed by an unlabeled breakdown before its total.
+
+    Numbers are grouped into runs split by non-numeric lines. The row's own
+    total is the run closest to the next recognized line item, not the
+    first run found.
+    """
+    runs: list[list[Decimal]] = [[]]
+    for line in window:
+        next_definition = _definition_for_label(line)
+        if next_definition is not None and next_definition.code != definition.code:
+            break
+        number = _number(line)
+        if number is None:
+            if runs[-1]:
+                runs.append([])
+            continue
+        runs[-1].append(number)
+    runs = [run for run in runs if run]
+    if not runs:
+        return ()
+    candidate = runs[-1]
+    if len(candidate) > period_count and _looks_like_note(
+        candidate[0], candidate[1:]
+    ):
+        candidate = candidate[1:]
+    if len(candidate) > period_count:
+        split = _footnote_split(candidate, period_count)
+        if split is not None:
+            candidate = candidate[split:]
+    if len(candidate) < period_count:
+        return ()
+    return tuple(candidate[:period_count])
+
+
+def _footnote_split(candidate: list[Decimal], period_count: int) -> int | None:
+    """Find a footnote marker directly ahead of the row's own values.
+
+    A footnote reference can sit right before a row's total (possibly after
+    an unlabeled breakdown sharing the same run, with nothing textual to
+    separate them). If the marker is positioned so exactly `period_count`
+    values follow it, that marker is the boundary.
+    """
+    index = len(candidate) - period_count - 1
+    if index < 0:
+        return None
+    if _looks_like_note(candidate[index], candidate[index + 1 :]):
+        return index + 1
+    return None
 
 
 def _looks_like_note(value: Decimal, following: list[Decimal]) -> bool:
