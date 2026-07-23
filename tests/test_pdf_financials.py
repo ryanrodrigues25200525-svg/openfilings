@@ -195,6 +195,28 @@ def test_aligned_pdf_text_finds_total_behind_unlabeled_segment_breakdown() -> No
     ).values[0].value == Decimal("349246000000")
 
 
+def test_aligned_pdf_text_does_not_confuse_subtotal_with_its_component() -> None:
+    """A combined subtotal label ("Passivo circulante e nao circulante" -
+    total liabilities) starts with a component's full name ("Passivo
+    circulante" - current liabilities) plus a conjunction. The component's
+    own row must not be overwritten by the later subtotal match."""
+    financials = extract_pdf_text_financials(
+        (_cvm_balance_sheet_text(),),
+        _filing(period_end=date(2025, 12, 31), source="cvm", filing_type="annual"),
+        source_url="https://example.test/cvm-report.pdf",
+        sha256="g" * 64,
+    )
+
+    balance = financials.balance_sheet()
+    assert balance is not None
+    assert next(
+        item for item in balance.line_items if item.code == "current_liabilities"
+    ).values[0].value == Decimal("198368000000")
+    assert next(
+        item for item in balance.line_items if item.code == "total_liabilities"
+    ).values[0].value == Decimal("805802000000")
+
+
 def test_financial_extractor_routes_pdf_documents_to_table_parser(monkeypatch) -> None:
     monkeypatch.setattr(
         "openfilings.xbrl.pdf_statements._pdf_statement_sections", lambda _: ()
@@ -353,6 +375,38 @@ def _english_report() -> str:
     | --- | ---: | ---: |
     | Net cash from operating activities | 450 | 400 |
     | Net cash used in investing activities | (210) | (180) |
+    """
+
+
+def _cvm_balance_sheet_text() -> str:
+    return """
+    Balanco Patrimonial
+    Exercicios findos em 31 de dezembro (Em milhoes de reais)
+    Consolidado
+    Passivo
+    Notas
+    2025
+    2024
+    Fornecedores
+    17
+    40.948
+    37.659
+    Passivo circulante
+    198.368
+    194.808
+    Financiamentos
+    30
+    133.462
+    127.539
+    Passivo nao circulante
+    607.434
+    562.475
+    Passivo circulante e nao circulante
+    805.802
+    757.283
+    Patrimonio liquido
+    417.587
+    367.514
     """
 
 

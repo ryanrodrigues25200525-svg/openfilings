@@ -233,6 +233,7 @@ _LINE_ITEM_ALIASES: dict[str, tuple[str, ...]] = {
     "total_liabilities": (
         "total liabilities",
         "passivo total",
+        "passivo circulante e nao circulante",
         "total de pasivos",
         "total pasivos",
         "負債總計",
@@ -912,12 +913,19 @@ def _statements(
 
 def _definition_for_label(label: str) -> LineItemDefinition | None:
     normalized = _normalize_label(label)
+    # An exact match is checked across every code first. A subtotal label
+    # can otherwise start with a different line item's full name plus a
+    # conjunction (e.g. "Passivo circulante e nao circulante" - total
+    # liabilities - starts with "Passivo circulante" - current liabilities),
+    # which the looser prefix match below would misclassify.
+    for code, aliases in _LINE_ITEM_ALIASES.items():
+        for alias in aliases:
+            if normalized == _normalize_label(alias):
+                return _DEFINITIONS[code]
     for code, aliases in _LINE_ITEM_ALIASES.items():
         for alias in aliases:
             normalized_alias = _normalize_label(alias)
-            if normalized == normalized_alias or normalized.startswith(
-                f"{normalized_alias} "
-            ):
+            if normalized.startswith(f"{normalized_alias} "):
                 return _DEFINITIONS[code]
             if " " not in normalized_alias and normalized.startswith(normalized_alias):
                 return _DEFINITIONS[code]
