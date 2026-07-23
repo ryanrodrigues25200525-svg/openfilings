@@ -4,6 +4,14 @@ OpenFilings is a lightweight, local-first tool for searching listed companies
 across Europe, Asia, and the Americas, listing public filings, and converting
 source documents into Markdown for LLMs.
 
+## Documentation
+
+- [Project description](PROJECT_DESCRIPTION.md)
+- [Architecture](ARCHITECTURE.md)
+- [Changelog](CHANGELOG.md)
+- [Contributing](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
+
 ## What works
 
 - Search UK-listed issuers through the FCA National Storage Mechanism (NSM)

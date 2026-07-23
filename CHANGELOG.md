@@ -1,5 +1,17 @@
 # Changelog
 
+All notable changes to OpenFilings are documented in this file.
+
+## Unreleased
+
+### Documentation
+
+- Added a complete system architecture document covering components, data
+  flows, adapter contracts, persistence, resource boundaries, trade-offs, and
+  market-extension guidance.
+- Added a project description defining the product scope, supported markets,
+  capabilities, technology, maturity, and current limitations.
+
 ## 0.21.0 - 2026-07-23
 
 - Added durable Canadian filing imports from allowlisted SEDAR+ generated URLs
