@@ -1063,11 +1063,6 @@ class OpenFilingsService:
         )
 
     @staticmethod
-    def _is_nsm_company_id(company_id: str) -> bool:
-        lowered = company_id.lower()
-        return lowered.startswith(("uk_lei_", "uk_nsm_issuer_"))
-
-    @staticmethod
     def _is_edinet_company_id(company_id: str) -> bool:
         return company_id.casefold().startswith("jp_e")
 
