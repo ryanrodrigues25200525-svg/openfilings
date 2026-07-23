@@ -6,7 +6,7 @@ import asyncio
 import hashlib
 import re
 from collections.abc import Callable, Coroutine
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, TypeVar, cast
 
 from openfilings.adapters.base import PublicMarketClient, SourceDocument
@@ -18,7 +18,11 @@ from openfilings.adapters.esef import ENABLED_ESEF_MARKETS, EsefClient
 from openfilings.adapters.fca_nsm import FcaNsmClient
 from openfilings.adapters.hkex import HkexClient
 from openfilings.adapters.nse import NseClient
-from openfilings.adapters.sedar import SedarClient
+from openfilings.adapters.sedar import (
+    SedarClient,
+    validate_sedar_document_url,
+    validate_sedar_pdf,
+)
 from openfilings.adapters.sfc import SfcClient
 from openfilings.adapters.sgx import SgxClient
 from openfilings.adapters.smv import SmvClient
@@ -341,6 +345,7 @@ class OpenFilingsService:
     ) -> list[Filing]:
         selection = self._validate_source(source)
         calls: list[Coroutine[Any, Any, list[Filing]]] = []
+        cached_market_filings: list[Filing] = []
 
         if selection in {"all", "fca_nsm"}:
             nsm_identifier = self._nsm_identifier(company_id)
@@ -458,20 +463,34 @@ class OpenFilingsService:
 
         market_source = self._market_source_for_company(company_id, selection)
         if market_source is not None:
-            calls.append(
-                market_source.list_filings(
+            cached_market_filings = (
+                self._cache.list_filings(
                     company_id,
+                    source="sedar",
                     category=category,
                     limit=limit,
                 )
+                if market_source.source == "sedar"
+                else []
             )
+            if not cached_market_filings:
+                calls.append(
+                    market_source.list_filings(
+                        company_id,
+                        category=category,
+                        limit=limit,
+                    )
+                )
         elif selection in self._market_sources_by_name:
             raise ConfigurationError(
                 f"The company ID does not belong to the {selection} source."
             )
 
         results = await self._gather_available(calls)
-        combined = [filing for result in results for filing in result]
+        combined = [
+            *cached_market_filings,
+            *(filing for result in results for filing in result),
+        ]
         filings = self._deduplicate_filings(combined)
         filings.sort(
             key=lambda filing: (
@@ -523,6 +542,73 @@ class OpenFilingsService:
         if filing is None:
             filing = await self._resolve_filing(filing_id)
             self._cache.put_filings([filing])
+        return FilingResource(filing, self)
+
+    async def import_sedar_filing(
+        self,
+        company_id: str,
+        *,
+        document_url: str,
+        title: str,
+        filing_date: date,
+        period_end: date | None = None,
+        filing_type: str = "annual",
+        category: str = "accounts",
+        document_data: bytes | None = None,
+    ) -> FilingResource:
+        """Register a user-selected SEDAR+ PDF in the normal filing pipeline."""
+
+        company = self._cache.get_company(company_id)
+        if company is None or "sedar" not in company.sources:
+            raise CompanyNotFoundError(
+                "Search and cache the TSX/TSXV company before importing its filing."
+            )
+        if not title.strip():
+            raise ConfigurationError("The filing title cannot be empty.")
+        if not filing_type.strip() or not category.strip():
+            raise ConfigurationError("Filing type and category cannot be empty.")
+
+        if document_data is None:
+            source = self._market_sources_by_name.get("sedar")
+            if source is None:
+                raise ConfigurationError("The SEDAR+ source is not configured.")
+            document = await source.download_document(document_url)
+        else:
+            if not document_url.casefold().startswith("file://"):
+                document_url = validate_sedar_document_url(document_url)
+            document = validate_sedar_pdf(
+                document_data,
+                source_url=document_url,
+            )
+
+        digest = hashlib.sha256(document.data).hexdigest()
+        identity = hashlib.sha256(f"{company.id}:{digest}".encode()).hexdigest()
+        filing_id = f"ca_sedar_filing_{identity[:24]}"
+        filing = Filing(
+            id=filing_id,
+            company_id=company.id,
+            source="sedar",
+            source_id=digest,
+            title=title.strip(),
+            category=category.strip(),
+            filing_type=filing_type.strip(),
+            filing_date=filing_date,
+            period_end=period_end,
+            document_id=f"cache:{filing_id}",
+            media_type="application/pdf",
+            issuer_name=company.name,
+            issuer_lei=company.lei,
+            pdf_available=True,
+            source_url=document.source_url,
+        )
+        self._cache.put_filings([filing])
+        self._cache.put_source_document(filing.id, document)
+        self._enforce_cache_limit()
+        if self._cache.get_source_document(filing.id) is None:
+            self._cache.delete_filing(filing.id)
+            raise DocumentUnavailableError(
+                "The PDF exceeds the configured cache budget and could not be retained."
+            )
         return FilingResource(filing, self)
 
     async def get_filing_markdown(
@@ -702,16 +788,36 @@ class OpenFilingsService:
             raise ConfigurationError("Cache size cannot be negative.")
         before = self._cache.stats()
         max_bytes = max_mb * 1024 * 1024
+        removed_sources = self._cache.prune_source_documents(
+            max(
+                0,
+                max_bytes
+                - before.compressed_content_bytes
+                - before.compressed_financial_bytes,
+            )
+        )
+        interim = self._cache.stats()
         removed = self._cache.prune_content(
-            max(0, max_bytes - before.compressed_financial_bytes)
+            max(
+                0,
+                max_bytes
+                - interim.compressed_source_bytes
+                - interim.compressed_financial_bytes,
+            )
         )
         interim = self._cache.stats()
         removed_financials = self._cache.prune_financials(
-            max(0, max_bytes - interim.compressed_content_bytes)
+            max(
+                0,
+                max_bytes
+                - interim.compressed_source_bytes
+                - interim.compressed_content_bytes,
+            )
         )
         self._cache.vacuum()
         return CachePruneResult(
             removed_documents=removed,
+            removed_source_documents=removed_sources,
             removed_financial_reports=removed_financials,
             before=before,
             after=self._cache.stats(),
@@ -771,6 +877,9 @@ class OpenFilingsService:
         raise FilingNotFoundError(f"Unsupported filing ID: {filing_id}.")
 
     async def _download_document(self, filing: Filing) -> SourceDocument:
+        cached = self._cache.get_source_document(filing.id)
+        if cached is not None:
+            return cached
         if filing.source == "edinet":
             if self._edinet is None:
                 raise ConfigurationError("The EDINET source is not configured.")
@@ -857,12 +966,31 @@ class OpenFilingsService:
 
     def _enforce_cache_limit(self) -> None:
         stats = self._cache.stats()
+        self._cache.prune_source_documents(
+            max(
+                0,
+                self._cache_max_bytes
+                - stats.compressed_content_bytes
+                - stats.compressed_financial_bytes,
+            )
+        )
+        stats = self._cache.stats()
         self._cache.prune_content(
-            max(0, self._cache_max_bytes - stats.compressed_financial_bytes)
+            max(
+                0,
+                self._cache_max_bytes
+                - stats.compressed_source_bytes
+                - stats.compressed_financial_bytes,
+            )
         )
         stats = self._cache.stats()
         self._cache.prune_financials(
-            max(0, self._cache_max_bytes - stats.compressed_content_bytes)
+            max(
+                0,
+                self._cache_max_bytes
+                - stats.compressed_source_bytes
+                - stats.compressed_content_bytes,
+            )
         )
 
     @staticmethod

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any, Literal
 
 from mcp.server.fastmcp import FastMCP
@@ -34,7 +35,8 @@ mcp = FastMCP(
         "Use companies_search and filings_list for discovery, filing_outline before "
         "reading content, filing_read for one section, and filing_search for short "
         "relevant excerpts. filing_markdown is paginated and should be a last resort. "
-        "All tools are read-only."
+        "Tools are read-only except sedar_filing_import, which stores one "
+        "user-selected public Canadian PDF in the local cache."
     ),
 )
 
@@ -96,6 +98,40 @@ async def filings_list(
             next_steps=(
                 "Use filing_outline with a filing id before requesting content.",
                 "Use filing_financials when structured statements answer the question.",
+            ),
+        )
+    except (OpenFilingsError, ValueError) as exc:
+        return _request_failure(exc)
+
+
+@mcp.tool()
+async def sedar_filing_import(
+    company_id: str,
+    document_url: str,
+    title: str,
+    filing_date: date,
+    period_end: date | None = None,
+    filing_type: str = "annual",
+    category: str = "accounts",
+) -> dict[str, Any]:
+    """Import one official SEDAR+ generated PDF URL into the local cache."""
+
+    try:
+        async with OpenFilingsService.from_settings() as service:
+            filing = await service.import_sedar_filing(
+                company_id,
+                document_url=document_url,
+                title=title,
+                filing_date=filing_date,
+                period_end=period_end,
+                filing_type=filing_type,
+                category=category,
+            )
+        return success(
+            {"filing": filing_summary(filing.record)},
+            next_steps=(
+                "Use filing_outline with the returned filing id.",
+                "Use filing_financials when structured statements are needed.",
             ),
         )
     except (OpenFilingsError, ValueError) as exc:

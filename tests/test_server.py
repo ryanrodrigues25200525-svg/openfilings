@@ -17,6 +17,7 @@ from openfilings.models import (
     FinancialValue,
     ReportingPeriod,
 )
+from openfilings.resources import FilingResource
 
 
 class _FakeService:
@@ -86,6 +87,9 @@ class _FakeService:
     async def get_filing_financials(self, *_: object, **__: object) -> FilingFinancials:
         return self.financials
 
+    async def import_sedar_filing(self, *_: object, **__: object) -> FilingResource:
+        return FilingResource(self.filing, self)  # type: ignore[arg-type]
+
 
 @pytest.fixture
 def fake_service(monkeypatch: pytest.MonkeyPatch) -> _FakeService:
@@ -130,6 +134,7 @@ async def test_mcp_registers_progressive_disclosure_tools() -> None:
     assert {tool.name for tool in tools} == {
         "companies_search",
         "filings_list",
+        "sedar_filing_import",
         "filing_outline",
         "filing_sections",
         "filing_read",
@@ -137,6 +142,26 @@ async def test_mcp_registers_progressive_disclosure_tools() -> None:
         "filing_markdown",
         "filing_financials",
     }
+
+
+@pytest.mark.asyncio
+async def test_sedar_import_returns_compact_metadata(
+    fake_service: _FakeService,
+) -> None:
+    response = await server.sedar_filing_import(
+        "ca_sedar_tsx_SHOP",
+        (
+            "https://www.sedarplus.ca/csa-party/viewInstance/view.html"
+            "?id=public-document"
+        ),
+        "2025 Annual Report",
+        date(2026, 3, 12),
+        period_end=date(2025, 12, 31),
+    )
+
+    assert response["success"] is True
+    assert response["data"]["filing"]["id"] == fake_service.filing.id
+    assert "document_id" not in response["data"]["filing"]
 
 
 @pytest.mark.asyncio

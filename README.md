@@ -21,13 +21,15 @@ source documents into Markdown for LLMs.
 - Search BMV, NSE, mainland Chinese, Peruvian, and Colombian listed issuers
 - List and download their public annual or interim financial reports without a key
 - Search TSX and TSXV operating companies through the official TSX directory
+- Import a user-selected SEDAR+ generated URL or browser-downloaded Canadian PDF
 - List and download keyless Inline XBRL financial reports from filings.xbrl.org
 - List EDINET annual, semiannual, quarterly, and current reports
 - Resolve listed-company names to legal entity identifiers (LEIs)
 - List regulated disclosures in one timeline
 - Download public PDF, HTML/XHTML, and tagged-report ZIP documents
 - Prefer tagged XHTML annual reports over PDF when available
-- Convert documents locally to Markdown without retaining the originals
+- Convert documents locally to Markdown; retain originals only for explicit
+  SEDAR+ imports so they remain usable without browser automation
 - Navigate extracted documents by heading and search within sections
 - Extract standardized income, balance-sheet, cash-flow, and comprehensive
   income statements from UK-GAAP, ESEF/IFRS, and EDINET Inline XBRL
@@ -41,9 +43,9 @@ source documents into Markdown for LLMs.
 
 All filing-feed families are free. FCA, European ESEF, CVM, TWSE/MOPS, HKEX,
 SGX, BMV, NSE, CNINFO, SMV, SFC, and TSX company discovery need no key. EDINET
-filing retrieval requires free API-key registration. SEDAR+ currently supports
-public filing search in a browser but blocks stable non-browser automation, so
-the Canada adapter is company-discovery only.
+filing retrieval requires free API-key registration. SEDAR+ discovery remains
+browser-based, but a generated public document URL or locally downloaded PDF can
+be imported without an account, API key, or browser runtime.
 
 ## Setup
 
@@ -226,13 +228,35 @@ BMV annual PDFs and quarterly IFRS JSON archives both convert to Markdown and
 normalized financial statements. Peru reads SMV statement tables through
 bounded official statement operations with limited request concurrency.
 
-Canada currently supports official TSX/TSXV listed-company discovery. Filing
-retrieval reports a clear SEDAR+ limitation instead of silently scraping an
-unstable browser session:
+Canada supports official TSX/TSXV listed-company discovery plus explicit
+user-selected filing imports. Search and cache the issuer first. Then use the
+SEDAR+ document search's **Generate URL** action:
 
 ```bash
 uv run openfilings search "SHOP" --source sedar
+uv run openfilings import-sedar ca_sedar_tsx_SHOP \
+  "https://www.sedarplus.ca/csa-party/..." \
+  --title "2025 Annual Report" \
+  --filing-date 2026-03-12 \
+  --period-end 2025-12-31
+uv run openfilings filings ca_sedar_tsx_SHOP --source sedar
+uv run openfilings fetch ca_sedar_filing_RETURNED_ID -o shopify-2025.md
 ```
+
+If SEDAR+ returns a browser-verification page for the generated URL, download
+the PDF normally and import the local file instead:
+
+```bash
+uv run openfilings import-sedar ca_sedar_tsx_SHOP shopify-2025.pdf \
+  --source-url "https://www.sedarplus.ca/csa-party/..." \
+  --title "2025 Annual Report" \
+  --filing-date 2026-03-12 \
+  --period-end 2025-12-31
+```
+
+URLs are restricted to official HTTPS SEDAR+ paths and redirects cannot escape
+the allowlist. Imports accept PDFs up to 100 MB. The compressed original shares
+the configured cache budget with Markdown and structured financials.
 
 Use the real filing ID returned by `filings` in the last two commands. Available
 source values are `all`, `fca-nsm`, `edinet`, `esef`, `cvm`, `twse`, `hkex`,
@@ -290,7 +314,25 @@ async with OpenFilings.from_settings() as openfilings:
 Company search results and filing collections support slicing, `head`, `find`,
 `filter`, and `latest`. Bound filings expose `markdown`, `obj`, `sections`,
 ranked `search`, `financials`, and `xbrl` methods. Prefetching retains compressed
-processed results while continuing to discard source documents.
+processed results while continuing to discard source documents. Explicit
+SEDAR+ imports are the exception: their compressed source PDF is retained so
+future extraction does not depend on the browser session.
+
+Canadian imports are also available through the service API:
+
+```python
+from datetime import date
+
+async with OpenFilings.from_settings() as openfilings:
+    filing = await openfilings.import_sedar_filing(
+        "ca_sedar_tsx_SHOP",
+        document_url="https://www.sedarplus.ca/csa-party/...",
+        title="2025 Annual Report",
+        filing_date=date(2026, 3, 12),
+        period_end=date(2025, 12, 31),
+    )
+    print(await filing.markdown())
+```
 
 Financial statements support `to_records()`, `to_markdown()`, and optional
 pandas conversion. Install the extra only when DataFrames are needed:
@@ -307,6 +349,7 @@ dimensions. The lower-level `OpenFilingsService`, normalized models, and raw
 
 - `companies_search(query, limit=5, source="all")`
 - `filings_list(company_id, category="accounts", limit=10, source="all", history_days=120)`
+- `sedar_filing_import(company_id, document_url, title, filing_date, period_end=None, filing_type="annual", category="accounts")`
 - `filing_outline(filing_id, limit=100, refresh=False)`
 - `filing_read(filing_id, section, offset=0, max_chars=6000, refresh=False)`
 - `filing_search(filing_id, query, limit=5, snippet_chars=1200)`
@@ -383,7 +426,8 @@ The new adapters request bounded official issuer and filing feeds on demand.
 Mexico, India, China, and Colombia download only selected filing PDFs or ZIPs;
 Peru renders normalized HTML statement tables directly from SMV's open datasets.
 Canada queries the small TSX/TSXV directory endpoints and does not automate
-SEDAR+ document retrieval.
+SEDAR+ discovery. Only a user-selected SEDAR+ URL or local PDF is downloaded,
+validated, compressed, and retained within the configured cache budget.
 
 On Tesco's 2026 FCA ESEF filing (29.5 MB Inline XBRL), the structured parser ran
 in about 0.63 seconds with approximately 150 MB peak resident memory on the
@@ -458,9 +502,10 @@ document hosts before download.
 Canada uses the official TSX/TSXV company directory for issuer discovery.
 SEDAR+ document search is public in a normal browser, but its stateful callbacks
 and Radware anti-automation controls do not provide a stable public API
-contract. The adapter therefore fails explicitly for filing retrieval until
-such a feed is available; OpenFilings does not bypass the control or require a
-browser runtime.
+contract. OpenFilings therefore does not automate discovery or bypass those
+controls. It accepts the platform's user-generated public document URLs and
+browser-downloaded PDFs, then routes them through the normal filing pipeline
+without a browser runtime.
 
 NSM materials remain subject to the FCA's terms and the rights attached to each
 filed document. PyMuPDF4LLM and PyMuPDF are AGPL-3.0 licensed; review their

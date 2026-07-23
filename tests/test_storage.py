@@ -5,6 +5,7 @@ import json
 import sqlite3
 import zlib
 
+from openfilings.adapters.base import SourceDocument
 from openfilings.models import ExtractionQuality, FilingContent
 from openfilings.storage.sqlite import SQLiteCache
 
@@ -45,6 +46,26 @@ def test_markdown_round_trips_as_compressed_content(tmp_path) -> None:
     removed = cache.prune_content(0, vacuum=True)
     assert removed == 1
     assert cache.stats().documents == 0
+    cache.close()
+
+
+def test_source_document_round_trips_and_prunes(tmp_path) -> None:
+    cache = SQLiteCache(tmp_path / "cache.sqlite3")
+    source = SourceDocument(
+        data=b"%PDF-1.7\n" + b"financial statements\n" * 10_000,
+        media_type="application/pdf",
+        source_url="file:///tmp/annual-report.pdf",
+        profile="sedar-import",
+    )
+
+    cache.put_source_document("ca_sedar_filing_123", source)
+    restored = cache.get_source_document("ca_sedar_filing_123")
+
+    assert restored == source
+    assert cache.stats().source_documents == 1
+    assert cache.stats().compressed_source_bytes < len(source.data)
+    assert cache.prune_source_documents(0) == 1
+    assert cache.get_source_document("ca_sedar_filing_123") is None
     cache.close()
 
 

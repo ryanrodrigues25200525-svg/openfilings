@@ -290,14 +290,17 @@ class CacheStats(DomainModel):
     companies: int = Field(ge=0)
     filings: int = Field(ge=0)
     documents: int = Field(ge=0)
+    source_documents: int = Field(default=0, ge=0)
     financial_reports: int = Field(default=0, ge=0)
     compressed_content_bytes: int = Field(ge=0)
+    compressed_source_bytes: int = Field(default=0, ge=0)
     compressed_financial_bytes: int = Field(default=0, ge=0)
     database_bytes: int = Field(ge=0)
 
 
 class CachePruneResult(DomainModel):
     removed_documents: int = Field(ge=0)
+    removed_source_documents: int = Field(default=0, ge=0)
     removed_financial_reports: int = Field(default=0, ge=0)
     before: CacheStats
     after: CacheStats

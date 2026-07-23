@@ -15,5 +15,6 @@ assert {
     "filing_outline",
     "filing_read",
     "filing_search",
+    "sedar_filing_import",
 } <= {tool.name for tool in asyncio.run(mcp.list_tools())}
 print("OpenFilings package smoke test passed")

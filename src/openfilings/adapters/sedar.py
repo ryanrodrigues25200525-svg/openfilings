@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 
@@ -29,6 +30,8 @@ _NON_COMPANY_MARKERS = (
     " income trust",
     " split corp",
 )
+MAX_SEDAR_DOCUMENT_BYTES = 100 * 1024 * 1024
+_MAX_REDIRECTS = 5
 
 
 class SedarClient(RetryingClient):
@@ -47,7 +50,7 @@ class SedarClient(RetryingClient):
             "TSX/SEDAR+",
             timeout_seconds=timeout_seconds,
             max_retries=max_retries,
-            headers={"User-Agent": "openfilings/0.20", "Referer": TSX_DIRECTORY_URL},
+            headers={"User-Agent": "openfilings/0.21", "Referer": TSX_DIRECTORY_URL},
             client=client,
         )
 
@@ -95,9 +98,24 @@ class SedarClient(RetryingClient):
         )
 
     async def download_document(self, document_id: str) -> SourceDocument:
-        raise DocumentUnavailableError(
-            "No SEDAR+ document was resolved; use the public SEDAR+ document search."
-        )
+        url = validate_sedar_document_url(document_id)
+        for _ in range(_MAX_REDIRECTS + 1):
+            response = await self._request(
+                "GET",
+                url,
+                follow_redirects=False,
+                _return_redirects=True,
+            )
+            if response.is_redirect:
+                location = response.headers.get("location")
+                if not location:
+                    raise DocumentUnavailableError(
+                        "SEDAR+ returned a redirect without a destination."
+                    )
+                url = validate_sedar_document_url(urljoin(url, location))
+                continue
+            return _pdf_document(response, source_url=url)
+        raise DocumentUnavailableError("SEDAR+ returned too many document redirects.")
 
     def matches_company_id(self, value: str) -> bool:
         return value.casefold().startswith("ca_sedar_")
@@ -140,3 +158,75 @@ class SedarClient(RetryingClient):
                 "Expected a Canadian company ID shaped like ca_sedar_tsx_SHOP."
             )
         return match.group(1).casefold(), match.group(2).upper()
+
+
+def validate_sedar_document_url(value: str) -> str:
+    """Return a normalized HTTPS URL confined to the official SEDAR+ host."""
+
+    url = value.strip()
+    parsed = urlsplit(url)
+    hostname = (parsed.hostname or "").casefold()
+    try:
+        port = parsed.port
+    except ValueError:
+        port = -1
+    if (
+        parsed.scheme.casefold() != "https"
+        or hostname not in {"sedarplus.ca", "www.sedarplus.ca"}
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in {None, 443}
+        or not parsed.path.startswith(("/csa-party/", "/csa-security/"))
+    ):
+        raise DocumentUnavailableError(
+            "Expected an HTTPS SEDAR+ generated document URL on "
+            "www.sedarplus.ca/csa-party/."
+        )
+    return parsed.geturl()
+
+
+def validate_sedar_pdf(
+    data: bytes,
+    *,
+    source_url: str,
+) -> SourceDocument:
+    """Validate a bounded user-supplied SEDAR+ PDF."""
+
+    if not data:
+        raise DocumentUnavailableError("The SEDAR+ document is empty.")
+    if len(data) > MAX_SEDAR_DOCUMENT_BYTES:
+        raise DocumentUnavailableError("The SEDAR+ document exceeds the 100 MB limit.")
+    if data[:4] != b"%PDF":
+        if _looks_like_html(data):
+            raise DocumentUnavailableError(
+                "SEDAR+ returned a browser verification or search page, not a PDF. "
+                "Download the document in your browser and import the local PDF."
+            )
+        raise DocumentUnavailableError("The supplied SEDAR+ document is not a PDF.")
+    return SourceDocument(
+        data=data,
+        media_type="application/pdf",
+        source_url=source_url,
+        profile="sedar-import",
+    )
+
+
+def _pdf_document(response: httpx.Response, *, source_url: str) -> SourceDocument:
+    content_length = response.headers.get("content-length")
+    try:
+        declared_bytes = int(content_length) if content_length else None
+    except ValueError:
+        declared_bytes = None
+    if declared_bytes is not None and declared_bytes > MAX_SEDAR_DOCUMENT_BYTES:
+        raise DocumentUnavailableError("The SEDAR+ document exceeds the 100 MB limit.")
+    return validate_sedar_pdf(
+        response.content,
+        source_url=source_url,
+    )
+
+
+def _looks_like_html(data: bytes) -> bool:
+    prefix = data[:1024].lstrip().lower()
+    return (
+        prefix.startswith((b"<!doctype html", b"<html", b"<?xml")) or b"<html" in prefix
+    )

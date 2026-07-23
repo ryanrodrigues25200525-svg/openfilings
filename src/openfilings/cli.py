@@ -7,6 +7,7 @@ import json
 import mimetypes
 import time
 from collections.abc import Coroutine
+from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Any
@@ -14,8 +15,13 @@ from typing import Annotated, Any
 import typer
 
 from openfilings.adapters.base import SourceDocument
+from openfilings.adapters.sedar import MAX_SEDAR_DOCUMENT_BYTES
 from openfilings.config import Settings
-from openfilings.exceptions import OpenFilingsError
+from openfilings.exceptions import (
+    ConfigurationError,
+    DocumentUnavailableError,
+    OpenFilingsError,
+)
 from openfilings.extraction.document import extract_document
 from openfilings.models import StatementType
 from openfilings.service import OpenFilingsService
@@ -222,6 +228,75 @@ def financials(
     _run(run())
 
 
+@app.command("import-sedar")
+def import_sedar(
+    company_id: Annotated[
+        str, typer.Argument(help="Cached TSX/TSXV company ID from `search`.")
+    ],
+    document: Annotated[
+        str,
+        typer.Argument(help="SEDAR+ generated HTTPS URL or local PDF path."),
+    ],
+    title: Annotated[str, typer.Option(help="Human-readable filing title.")],
+    filing_date: Annotated[
+        datetime, typer.Option(help="Submission date in YYYY-MM-DD format.")
+    ],
+    period_end: Annotated[
+        datetime | None, typer.Option(help="Optional reporting period end.")
+    ] = None,
+    filing_type: Annotated[
+        str, typer.Option(help="Normalized filing type, such as annual or interim.")
+    ] = "annual",
+    category: Annotated[
+        str, typer.Option(help="Normalized category, normally accounts.")
+    ] = "accounts",
+    source_url: Annotated[
+        str | None,
+        typer.Option(
+            help="Optional SEDAR+ generated URL to retain when importing a local PDF."
+        ),
+    ] = None,
+) -> None:
+    """Import a user-selected Canadian filing without browser automation."""
+
+    async def run() -> None:
+        is_remote = document.casefold().startswith(("https://", "http://"))
+        document_data: bytes | None = None
+        provenance_url = document
+        if not is_remote:
+            path = Path(document).expanduser()
+            if not path.is_file():
+                raise DocumentUnavailableError(f"Local PDF does not exist: {path}")
+            if path.stat().st_size > MAX_SEDAR_DOCUMENT_BYTES:
+                raise DocumentUnavailableError(
+                    "The SEDAR+ document exceeds the 100 MB limit."
+                )
+            document_data = path.read_bytes()
+            provenance_url = source_url or path.resolve().as_uri()
+        elif source_url is not None:
+            raise ConfigurationError(
+                "--source-url is only valid when importing a local PDF."
+            )
+
+        async with OpenFilingsService.from_settings() as service:
+            filing = await service.import_sedar_filing(
+                company_id,
+                document_url=provenance_url,
+                document_data=document_data,
+                title=title,
+                filing_date=filing_date.date(),
+                period_end=period_end.date() if period_end else None,
+                filing_type=filing_type,
+                category=category,
+            )
+        typer.echo(
+            f"Imported {filing.id}. Run `openfilings fetch {filing.id}` "
+            "or use the MCP filing tools."
+        )
+
+    _run(run())
+
+
 @app.command("sections")
 def sections(
     filing_id: Annotated[str, typer.Argument(help="OpenFilings filing ID.")],
@@ -310,8 +385,11 @@ def cache_status() -> None:
             f"Companies: {stats.companies}\n"
             f"Filings: {stats.filings}\n"
             f"Documents: {stats.documents}\n"
+            f"Cached source documents: {stats.source_documents}\n"
             f"Financial reports: {stats.financial_reports}\n"
             f"Compressed Markdown: {_format_bytes(stats.compressed_content_bytes)}\n"
+            f"Compressed source documents: "
+            f"{_format_bytes(stats.compressed_source_bytes)}\n"
             f"Compressed financials: "
             f"{_format_bytes(stats.compressed_financial_bytes)}\n"
             f"SQLite files: {_format_bytes(stats.database_bytes)}"
@@ -334,10 +412,12 @@ def cache_prune(
             result = service.prune_cache(max_mb=max_mb)
         compressed_bytes = (
             result.after.compressed_content_bytes
+            + result.after.compressed_source_bytes
             + result.after.compressed_financial_bytes
         )
         typer.echo(
-            f"Removed {result.removed_documents} document(s) and "
+            f"Removed {result.removed_documents} Markdown document(s), "
+            f"{result.removed_source_documents} source document(s), and "
             f"{result.removed_financial_reports} financial report(s). "
             f"Compressed cache is now "
             f"{_format_bytes(compressed_bytes)}."

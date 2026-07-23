@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import zlib
 from datetime import UTC, datetime
 from pathlib import Path
 
+from openfilings.adapters.base import SourceDocument
 from openfilings.models import (
     SUPPORTED_SOURCE_NAMES,
     CacheStats,
@@ -129,6 +131,19 @@ class SQLiteCache:
         )
         return filings[: max(0, limit)]
 
+    def delete_filing(self, filing_id: str) -> None:
+        with self._connection:
+            for table, column in (
+                ("filing_content", "filing_id"),
+                ("source_documents", "filing_id"),
+                ("filing_financials", "filing_id"),
+                ("filings", "id"),
+            ):
+                self._connection.execute(
+                    f"DELETE FROM {table} WHERE {column} = ?",
+                    (filing_id,),
+                )
+
     def get_market_state(self, key: str) -> str | None:
         row = self._connection.execute(
             "SELECT value FROM market_state WHERE key = ?", (key,)
@@ -177,6 +192,53 @@ class SQLiteCache:
                     content.extracted_at.isoformat(),
                 ),
             )
+
+    def put_source_document(self, filing_id: str, document: SourceDocument) -> None:
+        compressed = zlib.compress(document.data, level=6)
+        digest = hashlib.sha256(document.data).hexdigest()
+        with self._connection:
+            self._connection.execute(
+                """
+                INSERT INTO source_documents (
+                    filing_id, data_zlib, media_type, source_url, profile,
+                    sha256, cached_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(filing_id) DO UPDATE SET
+                    data_zlib = excluded.data_zlib,
+                    media_type = excluded.media_type,
+                    source_url = excluded.source_url,
+                    profile = excluded.profile,
+                    sha256 = excluded.sha256,
+                    cached_at = excluded.cached_at
+                """,
+                (
+                    filing_id,
+                    compressed,
+                    document.media_type,
+                    document.source_url,
+                    document.profile,
+                    digest,
+                    _utc_now_iso(),
+                ),
+            )
+
+    def get_source_document(self, filing_id: str) -> SourceDocument | None:
+        row = self._connection.execute(
+            """
+            SELECT data_zlib, media_type, source_url, profile
+            FROM source_documents
+            WHERE filing_id = ?
+            """,
+            (filing_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return SourceDocument(
+            data=zlib.decompress(row[0]),
+            media_type=row[1],
+            source_url=row[2],
+            profile=row[3],
+        )
 
     def get_content(self, filing_id: str) -> FilingContent | None:
         row = self._connection.execute(
@@ -268,11 +330,16 @@ class SQLiteCache:
         companies = self._count("companies")
         filings = self._count("filings")
         documents = self._count("filing_content")
+        source_documents = self._count("source_documents")
         financial_reports = self._count("filing_financials")
         row = self._connection.execute(
             "SELECT COALESCE(SUM(LENGTH(markdown_zlib)), 0) FROM filing_content"
         ).fetchone()
         compressed_bytes = int(row[0]) if row else 0
+        row = self._connection.execute(
+            "SELECT COALESCE(SUM(LENGTH(data_zlib)), 0) FROM source_documents"
+        ).fetchone()
+        compressed_source_bytes = int(row[0]) if row else 0
         row = self._connection.execute(
             "SELECT COALESCE(SUM(LENGTH(payload_zlib)), 0) FROM filing_financials"
         ).fetchone()
@@ -290,8 +357,10 @@ class SQLiteCache:
             companies=companies,
             filings=filings,
             documents=documents,
+            source_documents=source_documents,
             financial_reports=financial_reports,
             compressed_content_bytes=compressed_bytes,
+            compressed_source_bytes=compressed_source_bytes,
             compressed_financial_bytes=compressed_financial_bytes,
             database_bytes=database_bytes,
         )
@@ -351,6 +420,33 @@ class SQLiteCache:
             self.vacuum()
         return len(remove_ids)
 
+    def prune_source_documents(self, max_bytes: int, *, vacuum: bool = False) -> int:
+        if max_bytes < 0:
+            raise ValueError("max_bytes cannot be negative")
+        rows = self._connection.execute(
+            """
+            SELECT filing_id, LENGTH(data_zlib)
+            FROM source_documents
+            ORDER BY cached_at ASC, filing_id ASC
+            """
+        ).fetchall()
+        total_bytes = sum(int(row[1]) for row in rows)
+        remove_ids: list[str] = []
+        for filing_id, document_bytes in rows:
+            if total_bytes <= max_bytes:
+                break
+            remove_ids.append(str(filing_id))
+            total_bytes -= int(document_bytes)
+        if remove_ids:
+            with self._connection:
+                self._connection.executemany(
+                    "DELETE FROM source_documents WHERE filing_id = ?",
+                    [(filing_id,) for filing_id in remove_ids],
+                )
+        if vacuum:
+            self.vacuum()
+        return len(remove_ids)
+
     def vacuum(self) -> None:
         self._connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         self._connection.execute("VACUUM")
@@ -395,6 +491,16 @@ class SQLiteCache:
                 CREATE INDEX IF NOT EXISTS filing_content_sha256_idx
                     ON filing_content(sha256);
 
+                CREATE TABLE IF NOT EXISTS source_documents (
+                    filing_id TEXT PRIMARY KEY,
+                    data_zlib BLOB NOT NULL,
+                    media_type TEXT NOT NULL,
+                    source_url TEXT NOT NULL,
+                    profile TEXT,
+                    sha256 TEXT NOT NULL,
+                    cached_at TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS filing_financials (
                     filing_id TEXT PRIMARY KEY,
                     payload_zlib BLOB NOT NULL,
@@ -422,6 +528,7 @@ class SQLiteCache:
         company_ids = self._unsupported_company_ids()
         filing_ids = self._unsupported_filing_ids(company_ids)
         self._delete_records("filing_content", "filing_id", filing_ids)
+        self._delete_records("source_documents", "filing_id", filing_ids)
         self._delete_records("filing_financials", "filing_id", filing_ids)
         self._delete_records("filings", "id", filing_ids)
         self._delete_records("companies", "id", company_ids)
@@ -458,6 +565,7 @@ class SQLiteCache:
             "companies",
             "filings",
             "filing_content",
+            "source_documents",
             "filing_financials",
         }:
             raise ValueError("Unsupported cache table")

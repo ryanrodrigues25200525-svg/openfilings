@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.21.0 - 2026-07-23
+
+- Added durable Canadian filing imports from allowlisted SEDAR+ generated URLs
+  or browser-downloaded local PDFs.
+- Routed imported filings through the existing CLI, Python, Markdown, section,
+  structured-financial, and token-bounded MCP interfaces.
+- Added compressed source-document storage, cache-budget accounting, redirect
+  confinement, PDF validation, and explicit browser-verification recovery.
+
 ## 0.20.0 - 2026-07-23
 
 - Added keyless listed-company and filing adapters for Mexico BMV, India NSE,

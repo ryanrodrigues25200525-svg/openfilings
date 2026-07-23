@@ -46,6 +46,7 @@ class RetryingClient:
             await self._client.aclose()
 
     async def _request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
+        return_redirects = bool(kwargs.pop("_return_redirects", False))
         request_headers = {
             **self._default_headers,
             **dict(kwargs.pop("headers", {}) or {}),
@@ -63,6 +64,8 @@ class RetryingClient:
                 await asyncio.sleep(0.25 * (2**attempt))
                 continue
             if response.status_code not in {429, 500, 502, 503, 504}:
+                if return_redirects and response.is_redirect:
+                    return response
                 try:
                     response.raise_for_status()
                 except httpx.HTTPStatusError as exc:
