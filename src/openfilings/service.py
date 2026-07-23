@@ -21,7 +21,7 @@ from openfilings.adapters.sedar import (
     validate_sedar_document_url,
     validate_sedar_pdf,
 )
-from openfilings.adapters.sfc import SfcClient
+from openfilings.adapters.sfc import CUIF_DATASET_URL, SfcClient
 from openfilings.adapters.sgx import SgxClient
 from openfilings.adapters.smv import SmvClient
 from openfilings.config import Settings
@@ -48,6 +48,7 @@ from openfilings.models import (
     Filing,
     FilingContent,
     FilingFinancials,
+    FinancialStatement,
     OcrMode,
     SourceSelection,
 )
@@ -61,6 +62,7 @@ from openfilings.storage.sqlite import SQLiteCache
 from openfilings.xbrl import extract_filing_financials
 from openfilings.xbrl.cvm_structured import extract_cvm_structured_financials
 from openfilings.xbrl.pdf_statements import extract_pdf_ocr_financials
+from openfilings.xbrl.sfc_cuif_structured import extract_sfc_cuif_balance_sheet
 
 _Result = TypeVar("_Result")
 
@@ -663,10 +665,21 @@ class OpenFilingsService:
                 self._enforce_cache_limit()
                 return structured
 
+        cuif_balance_sheet = (
+            await self._extract_sfc_cuif_balance_sheet(filing)
+            if filing.source == "sfc"
+            else None
+        )
+
         if not filing.document_id:
-            raise DocumentUnavailableError(
-                f"Filing {filing.id} does not expose a downloadable document."
-            )
+            if cuif_balance_sheet is None:
+                raise DocumentUnavailableError(
+                    f"Filing {filing.id} does not expose a downloadable document."
+                )
+            financials = self._sfc_cuif_only_financials(filing, cuif_balance_sheet)
+            self._cache.put_financials(financials)
+            self._enforce_cache_limit()
+            return financials
 
         document = await self._download_document(filing)
         try:
@@ -676,14 +689,81 @@ class OpenFilingsService:
                 filing,
             )
         except FinancialsUnavailableError as direct_error:
-            financials = await self._extract_ocr_financials(
-                document,
-                filing,
-                direct_error,
+            try:
+                financials = await self._extract_ocr_financials(
+                    document,
+                    filing,
+                    direct_error,
+                )
+            except FinancialsUnavailableError:
+                if cuif_balance_sheet is None:
+                    raise
+                financials = self._sfc_cuif_only_financials(filing, cuif_balance_sheet)
+
+        if cuif_balance_sheet is not None:
+            # CUIF's balance-sheet accounts are supervisory stock figures and
+            # reconcile exactly; a PDF-derived balance sheet is heuristic, so
+            # CUIF replaces it here while the PDF still supplies every other
+            # statement family (income statement, cash flow, ...).
+            other_statements = tuple(
+                statement
+                for statement in financials.statements
+                if statement.statement_type != "balance_sheet"
             )
+            financials = financials.model_copy(
+                update={
+                    "statements": (*other_statements, cuif_balance_sheet),
+                    "extraction_method": (
+                        f"{financials.extraction_method}+sfc-cuif-supervisory-data"
+                    ),
+                }
+            )
+
         self._cache.put_financials(financials)
         self._enforce_cache_limit()
         return financials
+
+    async def _extract_sfc_cuif_balance_sheet(
+        self, filing: Filing
+    ) -> FinancialStatement | None:
+        """Prefer SFC's CUIF supervisory dataset (datos.gov.co) for the
+        balance sheet over heuristic PDF parsing - its assets/liabilities/
+        equity accounts are stock figures that reconcile exactly. Falls back
+        to None (letting the PDF path supply the balance sheet, as before)
+        if the entity or cut-off date isn't covered."""
+
+        sfc = self._market_sources_by_name.get("sfc")
+        if not isinstance(sfc, SfcClient) or filing.period_end is None:
+            return None
+        match = re.fullmatch(r"co_sfc_(\d{1,4})_(\d{1,6})", filing.company_id, re.I)
+        if match is None:
+            return None
+        try:
+            rows = await sfc.cuif_balance_sheet_rows(
+                match.group(1), match.group(2), filing.period_end
+            )
+        except SourceError:
+            return None
+        if rows is None:
+            return None
+        return extract_sfc_cuif_balance_sheet(rows, filing)
+
+    @staticmethod
+    def _sfc_cuif_only_financials(
+        filing: Filing, balance_sheet: FinancialStatement
+    ) -> FilingFinancials:
+        return FilingFinancials(
+            filing_id=filing.id,
+            company_id=filing.company_id,
+            source_url=CUIF_DATASET_URL,
+            extraction_method="sfc-cuif-supervisory-data",
+            statements=(balance_sheet,),
+            fact_count=len(balance_sheet.line_items),
+            taxonomy_namespaces=("sfc-cuif",),
+            sha256=hashlib.sha256(
+                f"{filing.id}:{filing.period_end}".encode()
+            ).hexdigest(),
+        )
 
     async def _extract_cvm_structured_financials(
         self, filing: Filing

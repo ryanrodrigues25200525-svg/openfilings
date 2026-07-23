@@ -455,9 +455,13 @@ and validates both announcement-detail and PDF-attachment paths.
 Mexico uses BMV's official issuer and financial-information services. India
 uses NSE's listed-equity CSV and annual-report service. Peru uses SMV's open
 financial-statement datasets, and Colombia uses SFC/SIMEV's current
-BVC-equity and financial-report services. Each adapter filters out funds and
-other non-operating exchange products and validates document hosts before
-download.
+BVC-equity and financial-report services. For Colombia, the balance sheet is
+read directly from SFC's CUIF supervisory dataset on datos.gov.co (assets,
+liabilities, and equity accounts reconcile exactly) instead of parsed from
+the PDF filing; the income statement still comes from the PDF, since CUIF
+reports income/expense accounts unclosed for supervisory purposes. Each
+adapter filters out funds and other non-operating exchange products and
+validates document hosts before download.
 
 Canada uses the official TSX/TSXV company directory for issuer discovery.
 SEDAR+ document search is public in a normal browser, but its stateful callbacks

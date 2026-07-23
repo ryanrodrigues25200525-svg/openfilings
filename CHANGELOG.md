@@ -10,8 +10,30 @@ All notable changes to OpenFilings are documented in this file.
   statements - a standardized chart of accounts published as free bulk
   CSV/ZIP archives - instead of parsing the PDF filing. Falls back to the
   existing PDF-heuristic path when a company/year isn't in the dataset.
+- Colombia's balance sheet is now read directly from SFC's CUIF supervisory
+  dataset on datos.gov.co (assets/liabilities/equity accounts reconcile
+  exactly across every regulated entity type) and merged with the PDF
+  filing's other statements. The income statement still comes from the PDF,
+  since CUIF reports income/expense accounts unclosed for supervisory
+  purposes - even at year-end, revenue exactly equals expenses.
 
 ### Fixed
+
+- PDF-derived financials (aligned-text path): a page footer or a stray note
+  reference carrying a real word alongside an embedded digit (e.g. a page
+  number) is no longer stripped down to a false numeric value; the forward
+  scan for a row's own numbers now stops after a run of unrelated prose
+  instead of reading through it.
+- PDF-derived financials: "Statement of Changes in Equity" is now detected
+  as a statement boundary in more layouts (a missing "consolidated"-prefixed
+  heading variant, and sentence-case headings beyond the first 12 lines),
+  so its rows (equity components, not fiscal years) no longer overwrite a
+  same-named row from a different statement.
+- PDF-derived financials: a note reusing a grand-total label ("Total
+  Assets") for a narrower scope (a subsidiary, a structured entity) no
+  longer wins over the real consolidated total when both candidates tie on
+  period count - the larger value is preferred, since a note's total can
+  only be a subset of the entity's real total.
 
 - PDF-derived financials: a labeled row followed by an unlabeled sub-item
   breakdown (no repeated "Total X" line) no longer misattributes the first

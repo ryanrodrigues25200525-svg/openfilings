@@ -26,6 +26,20 @@ PORTAL_URL = "https://www.superfinanciera.gov.co/SIMEV2/rnve/emisoresinscritosvi
 # This is the public client identifier shipped by the SIMEV frontend, not a user secret.
 _PUBLIC_API_KEY = "D4p2MNknJeQbz4mipjjEKOjPL1Eb4zwq"
 
+# datos.gov.co's Socrata dataset for SFC's CUIF (Catalogo Unico de Informacion
+# Financiera) - a supervisory chart of accounts reported by every SFC-regulated
+# entity type (banks, insurers, pension fund managers, brokers, ...), not just
+# banks. Balance-sheet-family accounts (class 1/2/3: assets/liabilities/equity)
+# are stock figures and reconcile exactly; income/expense accounts (class 4/5)
+# are reported unclosed for supervisory purposes (revenue exactly equals
+# expenses even at year-end) and are not usable as an income statement.
+CUIF_DATASET_URL = "https://www.datos.gov.co/resource/mxk5-ce6w.json"
+# The balance-sheet-family account codes recognized by
+# openfilings.xbrl.sfc_cuif_structured - kept as a SoQL $where filter so the
+# query returns only these rows instead of every sub-account under them
+# (an entity's full account tree can run into the thousands of rows).
+_BALANCE_SHEET_ACCOUNT_CODES = ("100000", "200000", "300000", "110000")
+
 
 class SfcClient(RetryingClient):
     """Search BVC equity issuers and retrieve SFC year-end report PDFs."""
@@ -117,6 +131,35 @@ class SfcClient(RetryingClient):
             media_type="application/pdf",
             source_url=source_url,
         )
+
+    async def cuif_balance_sheet_rows(
+        self, entity_type: str, entity_code: str, period_end: date
+    ) -> list[dict[str, object]] | None:
+        """Fetch CUIF balance-sheet accounts for one entity and cut-off date
+        from datos.gov.co. Returns None if that entity/date combination has
+        no published rows, so callers can fall back to the PDF filing."""
+
+        fecha_corte = f"{period_end.isoformat()}T00:00:00.000"
+        codes = ",".join(f"'{code}'" for code in _BALANCE_SHEET_ACCOUNT_CODES)
+        response = await self._request(
+            "GET",
+            CUIF_DATASET_URL,
+            params={
+                "tipo_entidad": entity_type,
+                "codigo_entidad": entity_code,
+                "fecha_corte": fecha_corte,
+                "moneda": "0",
+                "$where": f"cuenta in ({codes})",
+            },
+        )
+        message = "datos.gov.co returned an invalid CUIF response."
+        try:
+            rows = response.json()
+        except ValueError as exc:
+            raise SourceError(message) from exc
+        if not isinstance(rows, list):
+            raise SourceError(message)
+        return rows or None
 
     def matches_company_id(self, value: str) -> bool:
         return value.casefold().startswith("co_sfc_")
