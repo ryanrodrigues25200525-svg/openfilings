@@ -290,6 +290,35 @@ def test_definition_for_label_rejects_ratio_disclosures() -> None:
     assert _definition_for_label("Inventories").code == "inventory"
 
 
+def test_definition_for_label_rejects_ifrs5_disposal_group_disclosures() -> None:
+    """Peru's SMV-filed IFRS balance sheets carry a standard IFRS 5 caption
+    ("Activos no Corrientes o Grupos de Activos para su Disposicion
+    Clasificados como Mantenidos para la Venta...") that starts with the
+    same words as the "Activos no Corrientes" (noncurrent_assets) alias but
+    is a disposal-group disclosure, not the category total."""
+    from openfilings.xbrl.pdf_statements import _definition_for_label
+
+    assert (
+        _definition_for_label(
+            "Activos no Corrientes o Grupos de Activos para su "
+            "Disposicion Clasificados como Mantenidos para la Venta"
+        )
+        is None
+    )
+    assert _definition_for_label("Total Activos No Corrientes").code == (
+        "noncurrent_assets"
+    )
+
+
+def test_definition_for_label_rejects_total_pasivos_y_patrimonio() -> None:
+    """"Total Pasivos y Patrimonio" restates total assets (liabilities plus
+    equity), not the "Total Pasivos" (total_liabilities) line item alone."""
+    from openfilings.xbrl.pdf_statements import _definition_for_label
+
+    assert _definition_for_label("Total Pasivos y Patrimonio") is None
+    assert _definition_for_label("Total Pasivos").code == "total_liabilities"
+
+
 def test_single_word_alias_requires_glued_continuation() -> None:
     """A single-word alias (e.g. "revenue", "goodwill") must only match a
     directly-glued continuation (a plural "s", a footnote digit) - a

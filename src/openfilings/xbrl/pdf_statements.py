@@ -609,6 +609,11 @@ def _line_items_from_text(
             scale=scale,
             decimals=decimals,
         )
+        previous = items.get(definition.code)
+        if previous is not None and _all_zero(values) and not _all_zero(
+            previous.values
+        ):
+            continue
         items[definition.code] = FinancialLineItem(
             code=definition.code,
             name=definition.name,
@@ -663,16 +668,28 @@ def _line_items_from_table(
             decimals=table_format.decimals,
         )
     items: dict[str, FinancialLineItem] = {}
+    locked_codes: frozenset[str] = frozenset()
     first_value_column = min(column for column, _ in table_format.periods)
     for row in table.rows:
         if len(row) <= first_value_column:
             continue
         label = _row_label(row[:first_value_column])
         definition = _definition_for_label(label)
-        if definition is None:
+        if definition is None or definition.code in locked_codes:
             continue
         values = _row_values(row, definition, table_format, filing)
         if not values:
+            continue
+        previous = items.get(definition.code)
+        if previous is not None and _all_zero(values) and not _all_zero(
+            previous.values
+        ):
+            # IFRS balance sheets often repeat a label across both a
+            # current and a non-current breakdown (e.g. "Cuentas por
+            # Cobrar Comerciales" under both current and non-current
+            # assets). A later all-zero row for the same code is far more
+            # likely to be an unrelated, genuinely-empty sub-breakdown
+            # than proof the earlier reported value was wrong.
             continue
         items[definition.code] = FinancialLineItem(
             code=definition.code,
@@ -680,7 +697,18 @@ def _line_items_from_table(
             concept=f"pdf-label:{_concept_label(label)}",
             values=values,
         )
+        if definition.code == "current_assets":
+            # A "Total Current Assets" row marks the end of the current-
+            # asset breakdown. Everything gathered so far (cash, trade
+            # receivables, inventory) is scoped to it - a non-current
+            # section further down can reuse the exact same generic
+            # labels for unrelated accounts and must not overwrite them.
+            locked_codes = frozenset(items) - {"current_assets"}
     return tuple(items.values())
+
+
+def _all_zero(values: tuple[FinancialValue, ...]) -> bool:
+    return all(value.value == 0 for value in values)
 
 
 def _table_format(table: _MarkdownTable) -> _TableFormat | None:
@@ -998,9 +1026,16 @@ _DISQUALIFYING_SUFFIX_MARKERS = (
     "under development",
     "held for sale",
     "classified as held for sale",
+    # "Activos no Corrientes o Grupos de Activos para su Disposicion
+    # Clasificados como Mantenidos para la Venta..." is the IFRS 5 Spanish
+    # disposal-group disclosure, scoped separately from the base category.
+    "o grupos de",
     # "Total Equity and Liabilities" is a grand total restating total
-    # assets, not the equity line item alone.
+    # assets, not the equity line item alone. "Total Pasivos y Patrimonio"
+    # is the same pattern in Spanish, restating total assets rather than
+    # total liabilities alone.
     "and liabilities",
+    "y patrimonio",
     # "Total Assets of the Sponsored Structured Entities" is scoped to a
     # narrow disclosure perimeter, not the entity's own total.
     "of the",
