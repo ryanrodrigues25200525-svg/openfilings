@@ -26,6 +26,9 @@ _DIVIDER_CELL_PATTERN = re.compile(r"^:?-{2,}:?$")
 _FOOTNOTE_PATTERN = re.compile(r"(?:\s|\*)+(?:note\s*)?\d+[a-z]?$", re.IGNORECASE)
 _NON_LABEL_PATTERN = re.compile(r"[^\w\s]+", re.UNICODE)
 _WHITESPACE_PATTERN = re.compile(r"\s+")
+# Indian lakh/crore grouping (e.g. "2,57,935" or "10,22,401"): the last
+# group is 3 digits, every group before it is 2 digits.
+_INDIAN_GROUPING_PATTERN = re.compile(r"^\d{1,2}(,\d{2})*,\d{3}$")
 _STATEMENT_TITLES: dict[StatementType, str] = {
     "income_statement": "Income statement",
     "balance_sheet": "Balance sheet",
@@ -38,6 +41,7 @@ _LINE_ITEM_ALIASES: dict[str, tuple[str, ...]] = {
     "revenue": (
         "revenue",
         "total revenue",
+        "net revenue",
         "operating revenue",
         "net sales",
         "sales revenue",
@@ -63,6 +67,10 @@ _LINE_ITEM_ALIASES: dict[str, tuple[str, ...]] = {
     ),
     "gross_profit": (
         "gross profit",
+        # "Proft" covers a PDF text-extraction artifact that drops the "i"
+        # from the "fi" ligature (also seen as "offcer" for "officer" in
+        # the same documents).
+        "gross proft",
         "lucro bruto",
         "ganancia bruta",
         "utilidad bruta",
@@ -75,6 +83,8 @@ _LINE_ITEM_ALIASES: dict[str, tuple[str, ...]] = {
         "operating profit",
         "operating loss",
         "profit from operations",
+        "income from operations",
+        "loss from operations",
         "lucro operacional",
         "prejuizo operacional",
         "ganancia operativa",
@@ -88,7 +98,9 @@ _LINE_ITEM_ALIASES: dict[str, tuple[str, ...]] = {
         "profit before tax",
         "loss before tax",
         "profit before income tax",
+        "income before income tax",
         "income before income taxes",
+        "loss before income tax",
         "lucro antes do imposto de renda",
         "prejuizo antes do imposto de renda",
         "ganancia antes de impuestos",
@@ -101,6 +113,7 @@ _LINE_ITEM_ALIASES: dict[str, tuple[str, ...]] = {
     ),
     "income_tax": (
         "income tax expense",
+        "income tax expenses",
         "income tax benefit",
         "imposto de renda e contribuicao social",
         "gasto por impuesto a las ganancias",
@@ -115,6 +128,7 @@ _LINE_ITEM_ALIASES: dict[str, tuple[str, ...]] = {
         "profit for the period",
         "loss for the period",
         "net profit",
+        "net income",
         "net loss",
         "net profit after tax",
         "net loss after tax",
@@ -190,6 +204,7 @@ _LINE_ITEM_ALIASES: dict[str, tuple[str, ...]] = {
     ),
     "current_assets": (
         "current assets",
+        "total current assets",
         "ativo circulante",
         "activos corrientes",
         "total activos corrientes",
@@ -199,6 +214,8 @@ _LINE_ITEM_ALIASES: dict[str, tuple[str, ...]] = {
     "noncurrent_assets": (
         "non current assets",
         "noncurrent assets",
+        "total non current assets",
+        "total noncurrent assets",
         "ativo nao circulante",
         "activos no corrientes",
         "total activos no corrientes",
@@ -215,6 +232,7 @@ _LINE_ITEM_ALIASES: dict[str, tuple[str, ...]] = {
     ),
     "current_liabilities": (
         "current liabilities",
+        "total current liabilities",
         "passivo circulante",
         "pasivos corrientes",
         "total pasivos corrientes",
@@ -224,6 +242,8 @@ _LINE_ITEM_ALIASES: dict[str, tuple[str, ...]] = {
     "noncurrent_liabilities": (
         "non current liabilities",
         "noncurrent liabilities",
+        "total non current liabilities",
+        "total noncurrent liabilities",
         "passivo nao circulante",
         "pasivos no corrientes",
         "total pasivos no corrientes",
@@ -860,15 +880,21 @@ def _looks_like_note(value: Decimal, following: list[Decimal]) -> bool:
 
 
 def _statement_type(lines: tuple[str, ...]) -> StatementType | None:
-    opening = tuple(_normalize_label(line) for line in lines[:12])
-    for statement_type, headings in _STATEMENT_HEADINGS.items():
-        if any(
-            normalized_heading in line
-            for line in opening
-            for heading in headings
-            for normalized_heading in (_normalize_label(heading),)
-        ):
-            return statement_type
+    # Most headings sit in the first 12 lines, but a two-column layout can
+    # place the title between an assets table and a liabilities table
+    # below it, further down the page. Beyond the first 12 lines, a match
+    # only counts if the heading starts the line - otherwise an incidental
+    # mention (e.g. "...as on the balance sheet date:" mid-sentence in a
+    # notes page) would misclassify prose as a statement page.
+    for index, line in enumerate(lines):
+        normalized_line = _normalize_label(line)
+        for statement_type, headings in _STATEMENT_HEADINGS.items():
+            for heading in headings:
+                normalized_heading = _normalize_label(heading)
+                if index < 12 and normalized_heading in normalized_line:
+                    return statement_type
+                if normalized_line.startswith(normalized_heading):
+                    return statement_type
     return None
 
 
@@ -911,6 +937,27 @@ def _statements(
     return tuple(statements)
 
 
+_DISQUALIFYING_SUFFIX_MARKERS = (
+    # Ratio-analysis disclosures (e.g. "Inventory Turnover Ratio") start
+    # with a line item's full name too, but are not that line item's value.
+    "ratio",
+    "turnover",
+    "margin",
+    "growth",
+    "yield",
+    "coverage",
+    # A qualified variant (e.g. "Intangible Assets Under Development",
+    # "Property Held for Sale") is a distinct line item from its base
+    # category, not a formatting variant of the same value.
+    "under development",
+    "held for sale",
+    "classified as held for sale",
+    # "Total Equity and Liabilities" is a grand total restating total
+    # assets, not the equity line item alone.
+    "and liabilities",
+)
+
+
 def _definition_for_label(label: str) -> LineItemDefinition | None:
     normalized = _normalize_label(label)
     # An exact match is checked across every code first. A subtotal label
@@ -925,11 +972,23 @@ def _definition_for_label(label: str) -> LineItemDefinition | None:
     for code, aliases in _LINE_ITEM_ALIASES.items():
         for alias in aliases:
             normalized_alias = _normalize_label(alias)
-            if normalized.startswith(f"{normalized_alias} "):
-                return _DEFINITIONS[code]
-            if " " not in normalized_alias and normalized.startswith(normalized_alias):
+            is_prefix = normalized.startswith(f"{normalized_alias} ") or (
+                " " not in normalized_alias and normalized.startswith(normalized_alias)
+            )
+            disqualified = _has_disqualifying_suffix(normalized, normalized_alias)
+            if is_prefix and not disqualified:
                 return _DEFINITIONS[code]
     return None
+
+
+def _has_disqualifying_suffix(normalized: str, normalized_alias: str) -> bool:
+    """A prefix match can land on a different disclosure or line item that
+    merely starts with the same words (see _DISQUALIFYING_SUFFIX_MARKERS)."""
+    suffix = normalized[len(normalized_alias) :].strip()
+    return any(
+        suffix.startswith(_normalize_label(marker))
+        for marker in _DISQUALIFYING_SUFFIX_MARKERS
+    )
 
 
 def _reporting_period(
@@ -1038,6 +1097,8 @@ def _single_separator_number(value: str, separator: str) -> str:
     groups = value.split(separator)
     if len(groups) > 1 and all(len(group) == 3 for group in groups[1:]):
         return "".join(groups)
+    if separator == "," and _INDIAN_GROUPING_PATTERN.fullmatch(value):
+        return value.replace(",", "")
     return value.replace(separator, ".")
 
 

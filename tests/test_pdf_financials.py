@@ -136,6 +136,42 @@ def test_pdf_table_extraction_rejects_unrelated_and_single_metric_tables() -> No
         )
 
 
+def test_pdf_table_extraction_covers_common_english_summary_labels() -> None:
+    """MD&A financial-performance tables commonly use "Net Revenue", "Income
+    from Operations", "Income before Income Tax" (singular), "Income Tax
+    Expenses" (plural), and "Net Income" - none of which are the primary
+    alias for their line item. A PDF ligature-extraction artifact also
+    turns "Gross Profit" into "Gross Proft" ("fi" loses its "i")."""
+    markdown = """
+    |Item|2024|2023|Difference|%|
+    |---|---|---|---|---|
+    |Net Revenue|2,894,307,699|2,161,735,841|732,571,858|34%|
+    |Cost of Revenue|1,269,954,135|986,625,213|283,328,922|29%|
+    |Gross Proft|1,624,353,564|1,175,110,628|449,242,936|38%|
+    |Income from Operations|1,322,053,050|921,465,606|400,587,444|43%|
+    |Income before Income Tax|1,405,838,635|979,171,324|426,667,311|44%|
+    |Income Tax Expenses|233,406,876|141,403,807|92,003,069|65%|
+    |Net Income|1,172,431,759|837,767,517|334,664,242|40%|
+    """
+
+    financials = extract_pdf_table_financials(
+        markdown,
+        _filing(period_end=date(2024, 12, 31), source="twse", filing_type="annual"),
+        source_url="https://example.test/twse-report.pdf",
+        sha256="h" * 64,
+    )
+
+    income = financials.income_statement()
+    assert income is not None
+    codes = {item.code: item.values[0].value for item in income.line_items}
+    assert codes["revenue"] == Decimal("2894307699")
+    assert codes["gross_profit"] == Decimal("1624353564")
+    assert codes["operating_income_loss"] == Decimal("1322053050")
+    assert codes["profit_before_tax"] == Decimal("1405838635")
+    assert codes["income_tax"] == Decimal("233406876")
+    assert codes["net_income_loss"] == Decimal("1172431759")
+
+
 def test_aligned_pdf_text_builds_group_financial_statements() -> None:
     financials = extract_pdf_text_financials(
         (_sgx_income_text(), _sgx_position_text(), _sgx_cash_flow_text()),
@@ -215,6 +251,43 @@ def test_aligned_pdf_text_does_not_confuse_subtotal_with_its_component() -> None
     assert next(
         item for item in balance.line_items if item.code == "total_liabilities"
     ).values[0].value == Decimal("805802000000")
+
+
+def test_aligned_pdf_text_handles_indian_filing_conventions() -> None:
+    """Covers three conventions seen in Indian (NSE) annual reports: lakh/
+    crore comma grouping ("2,57,935") that Western 3-digit grouping logic
+    can't parse; a bare section header ("Current Liabilities") appearing
+    before its own "Total X" row, which must not keep the header's
+    (wrong) nearby numbers once the real total is found; and a grand
+    total ("Total Equity and Liabilities") that restates total assets and
+    must not be read as the equity line item. The heading also sits past
+    the first 12 lines, exercising content-based statement detection."""
+    financials = extract_pdf_text_financials(
+        (_nse_balance_sheet_text(),),
+        _filing(period_end=date(2025, 3, 31), source="nse", filing_type="annual"),
+        source_url="https://example.test/nse-report.pdf",
+        sha256="i" * 64,
+    )
+
+    balance = financials.balance_sheet()
+    assert balance is not None
+    codes = {item.code: item.values[0].value for item in balance.line_items}
+    assert codes["current_liabilities"] == Decimal("257935")
+    assert codes["total_equity"] == Decimal("543087")
+    assert codes["total_assets"] == Decimal("1022401")
+    assert codes["total_equity"] + codes["total_liabilities"] == codes["total_assets"]
+
+
+def test_definition_for_label_rejects_ratio_disclosures() -> None:
+    """A mandatory "Ratio Analysis" note (e.g. Schedule III filings) lists
+    metrics like "Inventory Turnover Ratio" that start with a line item's
+    full name but are not that line item's balance-sheet value."""
+    from openfilings.xbrl.pdf_statements import _definition_for_label
+
+    assert _definition_for_label("Inventory Turnover Ratio") is None
+    assert _definition_for_label("Trade Receivables Turnover Ratio") is None
+    assert _definition_for_label("Net Profit Margin (%)") is None
+    assert _definition_for_label("Inventories").code == "inventory"
 
 
 def test_financial_extractor_routes_pdf_documents_to_table_parser(monkeypatch) -> None:
@@ -375,6 +448,72 @@ def _english_report() -> str:
     | --- | ---: | ---: |
     | Net cash from operating activities | 450 | 400 |
     | Net cash used in investing activities | (210) | (180) |
+    """
+
+
+def _nse_balance_sheet_text() -> str:
+    return """
+    Reliance Industries Limited
+    Integrated Annual Report 2024-25
+    (Rs in crore)
+    Notes
+    As at
+    31st March, 2025
+    As at
+    31st March, 2024
+    Assets
+    Non-Current Assets
+    Property, Plant and Equipment
+    1
+    2,67,096
+    2,58,911
+    Current Assets
+    Inventories
+    6
+    89,216
+    85,100
+    Trade Receivables
+    8
+    15,591
+    14,740
+    Cash and Cash Equivalents
+    9
+    82,471
+    69,248
+    Total Assets
+    10,22,401
+    9,59,643
+    Balance Sheet
+    As at 31st March, 2025
+    Equity and Liabilities
+    Equity
+    Total Equity
+    5,43,087
+    5,15,096
+    Liabilities
+    Non-Current Liabilities
+    Total Non-Current Liabilities
+    2,21,379
+    2,04,533
+    Current Liabilities
+    Financial Liabilities
+    Borrowings
+    20
+    26,788
+    50,731
+    Provisions
+    24
+    1,156
+    972
+    Total Current Liabilities
+    2,57,935
+    2,40,014
+    Total Liabilities
+    4,79,314
+    4,44,547
+    Total Equity and Liabilities
+    10,22,401
+    9,59,643
     """
 
 
