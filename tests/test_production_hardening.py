@@ -17,6 +17,11 @@ def test_keyless_smoke_matrix_covers_every_enabled_source_except_edinet() -> Non
         "twse",
         "hkex",
         "sgx",
+        "bmv",
+        "nse",
+        "cninfo",
+        "smv",
+        "sfc",
     }
     assert all(case.query and case.label for case in SMOKE_CASES)
 

@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.20.0 - 2026-07-23
+
+- Added keyless listed-company and filing adapters for Mexico BMV, India NSE,
+  mainland China CNINFO/SSE, Peru SMV, and Colombia SFC/SIMEV.
+- Added official TSX/TSXV Canadian company discovery with an explicit SEDAR+
+  browser-only filing limitation.
+- Added retry-bounded shared HTTP handling, strict document-host validation,
+  live smoke coverage, and Spanish and Simplified Chinese PDF table aliases.
+- Added INR, MXN, CAD, CNY, PEN, and COP structured-statement currency support.
+- Redesigned MCP responses for LLM use with compact metadata, progressive
+  disclosure, section outlines, targeted reads, ranked excerpts, pagination,
+  structured recovery guidance, and bounded financial-statement filters.
+- Added native Markdown and structured-statement extraction for BMV quarterly
+  IFRS JSON archives.
+- Replaced Peru's 100,000-row SMV downloads with bounded official statement
+  operations and limited request concurrency.
+
 ## 0.19.0 - 2026-07-23
 
 - Added keyless listed-company adapters for seven ESEF markets, Brazil, Taiwan,

@@ -45,7 +45,10 @@ _LINE_ITEM_ALIASES: dict[str, tuple[str, ...]] = {
         "receita liquida",
         "receita operacional liquida",
         "receitas",
+        "ingresos",
+        "ingresos de actividades ordinarias",
         "營業收入",
+        "营业收入",
         "收入合計",
         "收益",
     ),
@@ -53,12 +56,18 @@ _LINE_ITEM_ALIASES: dict[str, tuple[str, ...]] = {
         "cost of revenue",
         "cost of sales",
         "custo das vendas",
+        "costo de ventas",
         "營業成本",
+        "营业成本",
     ),
     "gross_profit": (
         "gross profit",
         "lucro bruto",
+        "ganancia bruta",
+        "utilidad bruta",
+        "ganancia perdida bruta",
         "營業毛利",
+        "营业毛利",
         "營業毛損",
     ),
     "operating_income_loss": (
@@ -67,7 +76,11 @@ _LINE_ITEM_ALIASES: dict[str, tuple[str, ...]] = {
         "profit from operations",
         "lucro operacional",
         "prejuizo operacional",
+        "ganancia operativa",
+        "utilidad operativa",
+        "ganancia perdida operativa",
         "營業利益",
+        "营业利润",
         "營業損失",
     ),
     "profit_before_tax": (
@@ -77,7 +90,11 @@ _LINE_ITEM_ALIASES: dict[str, tuple[str, ...]] = {
         "income before income taxes",
         "lucro antes do imposto de renda",
         "prejuizo antes do imposto de renda",
+        "ganancia antes de impuestos",
+        "utilidad antes de impuestos",
+        "ganancia perdida antes de impuestos",
         "稅前淨利",
+        "税前利润",
         "稅前淨損",
         "稅前利益",
     ),
@@ -85,7 +102,10 @@ _LINE_ITEM_ALIASES: dict[str, tuple[str, ...]] = {
         "income tax expense",
         "income tax benefit",
         "imposto de renda e contribuicao social",
+        "gasto por impuesto a las ganancias",
+        "ingreso gasto por impuesto",
         "所得稅費用",
+        "所得税费用",
         "所得稅利益",
     ),
     "net_income_loss": (
@@ -99,7 +119,12 @@ _LINE_ITEM_ALIASES: dict[str, tuple[str, ...]] = {
         "net loss after tax",
         "lucro liquido",
         "prejuizo liquido",
+        "ganancia neta",
+        "utilidad neta",
+        "resultado del ejercicio",
+        "ganancia perdida neta del ejercicio",
         "本期淨利",
+        "净利润",
         "本期淨損",
         "本年度淨利",
         "本年度淨損",
@@ -122,61 +147,105 @@ _LINE_ITEM_ALIASES: dict[str, tuple[str, ...]] = {
         "total comprehensive income",
         "total comprehensive loss",
         "resultado abrangente total",
+        "total resultado integral del ejercicio",
         "本期綜合損益總額",
     ),
     "cash_and_cash_equivalents": (
         "cash and cash equivalents",
         "caixa e equivalentes de caixa",
+        "efectivo y equivalentes al efectivo",
         "現金及約當現金",
+        "货币资金",
     ),
     "trade_receivables": (
         "trade and other receivables",
         "trade receivables",
         "contas a receber",
+        "cuentas por cobrar comerciales",
         "應收帳款",
+        "应收账款",
     ),
-    "inventory": ("inventories", "inventory", "estoques", "存貨"),
+    "inventory": (
+        "inventories",
+        "inventory",
+        "estoques",
+        "inventarios",
+        "存貨",
+        "存货",
+    ),
     "property_plant_equipment": (
         "property plant and equipment",
         "imobilizado",
+        "propiedades planta y equipo",
         "不動產廠房及設備",
+        "固定资产",
     ),
     "goodwill": ("goodwill", "agio", "商譽"),
     "intangible_assets": (
         "intangible assets",
         "intangivel",
+        "activos intangibles",
         "無形資產",
     ),
-    "current_assets": ("current assets", "ativo circulante", "流動資產"),
+    "current_assets": (
+        "current assets",
+        "ativo circulante",
+        "activos corrientes",
+        "total activos corrientes",
+        "流動資產",
+        "流动资产",
+    ),
     "noncurrent_assets": (
         "non current assets",
         "noncurrent assets",
         "ativo nao circulante",
+        "activos no corrientes",
+        "total activos no corrientes",
         "非流動資產",
+        "非流动资产",
     ),
-    "total_assets": ("total assets", "ativo total", "資產總計", "資產總額"),
+    "total_assets": (
+        "total assets",
+        "ativo total",
+        "total de activos",
+        "total activos",
+        "資產總計",
+        "资产总计",
+    ),
     "current_liabilities": (
         "current liabilities",
         "passivo circulante",
+        "pasivos corrientes",
+        "total pasivos corrientes",
         "流動負債",
+        "流动负债",
     ),
     "noncurrent_liabilities": (
         "non current liabilities",
         "noncurrent liabilities",
         "passivo nao circulante",
+        "pasivos no corrientes",
+        "total pasivos no corrientes",
         "非流動負債",
+        "非流动负债",
     ),
     "total_liabilities": (
         "total liabilities",
         "passivo total",
+        "total de pasivos",
+        "total pasivos",
         "負債總計",
+        "负债合计",
         "負債總額",
     ),
     "total_equity": (
         "total equity",
         "shareholders equity",
         "patrimonio liquido",
+        "total patrimonio",
+        "patrimonio atribuible a los propietarios",
         "權益總計",
+        "所有者权益合计",
         "權益總額",
     ),
     "operating_cash_flow": (
@@ -185,6 +254,8 @@ _LINE_ITEM_ALIASES: dict[str, tuple[str, ...]] = {
         "net cash generated from operating activities",
         "cash generated from operating activities",
         "caixa liquido gerado pelas atividades operacionais",
+        "flujos de efectivo y equivalente al efectivo procedente de utilizados "
+        "en actividades de operacion",
         "營業活動之淨現金流入",
         "營業活動之淨現金流出",
         "營業活動淨現金流量",
@@ -194,6 +265,8 @@ _LINE_ITEM_ALIASES: dict[str, tuple[str, ...]] = {
         "net cash used in investing activities",
         "net cash generated from investing activities",
         "caixa liquido aplicado nas atividades de investimento",
+        "flujos de efectivo y equivalente al efectivo procedente de utilizados "
+        "en actividades de inversion",
         "投資活動之淨現金流入",
         "投資活動之淨現金流出",
         "投資活動淨現金流量",
@@ -203,6 +276,8 @@ _LINE_ITEM_ALIASES: dict[str, tuple[str, ...]] = {
         "net cash used in financing activities",
         "net cash generated from financing activities",
         "caixa liquido gerado pelas atividades de financiamento",
+        "flujos de efectivo y equivalente al efectivo procedente de utilizados "
+        "en actividades de financiacion",
         "融資活動之淨現金流入",
         "融資活動之淨現金流出",
         "籌資活動淨現金流量",
@@ -211,6 +286,7 @@ _LINE_ITEM_ALIASES: dict[str, tuple[str, ...]] = {
         "capital expenditure",
         "purchase of property plant and equipment",
         "aquisicao de imobilizado",
+        "compra de propiedades planta y equipo",
         "取得不動產廠房及設備",
     ),
     "dividends_paid": (
@@ -232,6 +308,11 @@ _CURRENCY_MARKERS = (
     ("BRL", ("r$", "brl", "reais", "real brasileiro")),
     ("TWD", ("nt$", "ntd", "twd", "新台幣")),
     ("CNY", ("rmb", "cny", "人民幣")),
+    ("INR", ("inr", "₹", "indian rupee")),
+    ("MXN", ("mxn", "mexican peso", "pesos mexicanos")),
+    ("CAD", ("c$", "cad", "canadian dollar")),
+    ("PEN", ("s/", "pen", "soles")),
+    ("COP", ("cop", "pesos colombianos")),
     ("JPY", ("jpy", "円", "日圓")),
     ("USD", ("us$", "usd", "u.s. dollar")),
     ("EUR", ("eur", "€", "euro")),
@@ -242,6 +323,12 @@ _DEFAULT_CURRENCY_BY_SOURCE = {
     "hkex": "HKD",
     "sgx": "SGD",
     "twse": "TWD",
+    "bmv": "MXN",
+    "nse": "INR",
+    "sedar": "CAD",
+    "cninfo": "CNY",
+    "smv": "PEN",
+    "sfc": "COP",
 }
 _STATEMENT_HEADINGS: dict[StatementType, tuple[str, ...]] = {
     "income_statement": (
@@ -250,7 +337,10 @@ _STATEMENT_HEADINGS: dict[StatementType, tuple[str, ...]] = {
         "income statement",
         "statement of profit or loss",
         "demonstracao do resultado",
+        "estado de resultados",
+        "estado del resultado",
         "綜合損益表",
+        "利润表",
         "損益表",
     ),
     "balance_sheet": (
@@ -258,24 +348,32 @@ _STATEMENT_HEADINGS: dict[StatementType, tuple[str, ...]] = {
         "consolidated balance sheet",
         "balance sheet",
         "balanco patrimonial",
+        "estado de situacion financiera",
+        "estado de situación financiera",
         "資產負債表",
+        "资产负债表",
     ),
     "cash_flow_statement": (
         "consolidated statement of cash flows",
         "statement of cash flows",
         "cash flow statement",
         "demonstracao dos fluxos de caixa",
+        "estado de flujos de efectivo",
         "現金流量表",
+        "现金流量表",
     ),
     "comprehensive_income": (
         "statement of other comprehensive income",
         "demonstracao do resultado abrangente",
+        "estado de resultados integrales",
         "其他綜合損益",
     ),
     "changes_in_equity": (
         "statement of changes in equity",
         "demonstracao das mutacoes do patrimonio liquido",
+        "estado de cambios en el patrimonio",
         "權益變動表",
+        "所有者权益变动表",
     ),
 }
 
@@ -300,6 +398,7 @@ def extract_pdf_table_financials(
     *,
     source_url: str,
     sha256: str,
+    extraction_method: str = "pdf-markdown-tables",
 ) -> FilingFinancials:
     """Return high-confidence standardized values from Markdown table rows."""
 
@@ -322,7 +421,7 @@ def extract_pdf_table_financials(
         filing_id=filing.id,
         company_id=filing.company_id,
         source_url=source_url,
-        extraction_method="pdf-markdown-tables",
+        extraction_method=extraction_method,
         statements=statements,
         fact_count=sum(
             len(item.values)
@@ -536,6 +635,13 @@ def _line_items_from_table(
     table_format = _table_format(table)
     if table_format is None:
         return ()
+    if table_format.currency is None:
+        table_format = _TableFormat(
+            periods=table_format.periods,
+            currency=_DEFAULT_CURRENCY_BY_SOURCE.get(filing.source),
+            scale=table_format.scale,
+            decimals=table_format.decimals,
+        )
     items: dict[str, FinancialLineItem] = {}
     first_value_column = min(column for column, _ in table_format.periods)
     for row in table.rows:
@@ -857,10 +963,22 @@ def _currency(value: str) -> str | None:
         (
             code
             for code, markers in _CURRENCY_MARKERS
-            if any(marker.casefold() in normalized for marker in markers)
+            if any(_has_currency_marker(normalized, marker) for marker in markers)
         ),
         None,
     )
+
+
+def _has_currency_marker(value: str, marker: str) -> bool:
+    normalized_marker = marker.casefold()
+    if normalized_marker.isascii() and normalized_marker.replace(" ", "").isalnum():
+        return bool(
+            re.search(
+                rf"(?<!\w){re.escape(normalized_marker)}(?!\w)",
+                value,
+            )
+        )
+    return normalized_marker in value
 
 
 def _scale(value: str) -> Decimal:

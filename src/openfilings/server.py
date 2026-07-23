@@ -1,20 +1,39 @@
-"""MCP tools backed by the same OpenFilings service as the CLI."""
+"""Token-bounded MCP tools backed by the OpenFilings application service."""
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from mcp.server.fastmcp import FastMCP
 
-from openfilings.models import OcrMode
+from openfilings.exceptions import OpenFilingsError
+from openfilings.mcp_support import (
+    MAX_FINANCIAL_LINE_ITEMS,
+    MAX_FINANCIAL_PERIODS,
+    MAX_METADATA_RESULTS,
+    MAX_OUTLINE_SECTIONS,
+    MAX_SEARCH_RESULTS,
+    MAX_SNIPPET_CHARS,
+    company_summary,
+    failure,
+    filing_summary,
+    financials_view,
+    query_excerpt,
+    section_summary,
+    success,
+    text_window,
+    validate_limit,
+)
+from openfilings.models import OcrMode, StatementType
 from openfilings.service import OpenFilingsService
 
 mcp = FastMCP(
     "OpenFilings",
     instructions=(
-        "Search UK, Japanese, European, Brazilian, Taiwanese, Hong Kong, and "
-        "Singapore-listed companies; list FCA NSM, EDINET, ESEF, CVM, TWSE/MOPS, "
-        "HKEXnews, and SGX filings; and retrieve documents as Markdown. "
+        "Search listed companies and public filings across supported global markets. "
+        "Use companies_search and filings_list for discovery, filing_outline before "
+        "reading content, filing_read for one section, and filing_search for short "
+        "relevant excerpts. filing_markdown is paginated and should be a last resort. "
         "All tools are read-only."
     ),
 )
@@ -22,51 +41,97 @@ mcp = FastMCP(
 
 @mcp.tool()
 async def companies_search(
-    query: str, limit: int = 10, source: str = "all"
-) -> list[dict[str, Any]]:
-    """Search supported markets and return stable OpenFilings company IDs."""
+    query: str,
+    limit: int = 5,
+    source: str = "all",
+) -> dict[str, Any]:
+    """Find companies using compact metadata; start most company workflows here."""
 
-    async with OpenFilingsService.from_settings() as service:
-        companies = await service.search_companies(query, limit=limit, source=source)
-    return [company.model_dump(mode="json") for company in companies]
+    try:
+        validate_limit(limit, maximum=MAX_METADATA_RESULTS)
+        async with OpenFilingsService.from_settings() as service:
+            companies = await service.search_companies(
+                query,
+                limit=limit,
+                source=source,
+            )
+        return success(
+            {
+                "companies": [company_summary(company) for company in companies],
+                "count": len(companies),
+            },
+            next_steps=(
+                "Use filings_list with a company id to discover recent filings.",
+            ),
+        )
+    except (OpenFilingsError, ValueError) as exc:
+        return _request_failure(exc)
 
 
 @mcp.tool()
 async def filings_list(
     company_id: str,
     category: str | None = "accounts",
-    limit: int = 25,
+    limit: int = 10,
     source: str = "all",
     history_days: int = 120,
-) -> list[dict[str, Any]]:
-    """List normalized filings; history_days controls the EDINET lookback."""
+) -> dict[str, Any]:
+    """List compact filing metadata without downloading document content."""
 
-    async with OpenFilingsService.from_settings() as service:
-        filings = await service.list_filings(
-            company_id,
-            category=category,
-            limit=limit,
-            source=source,
-            edinet_lookback_days=history_days,
+    try:
+        validate_limit(limit, maximum=MAX_METADATA_RESULTS)
+        async with OpenFilingsService.from_settings() as service:
+            filings = await service.list_filings(
+                company_id,
+                category=category,
+                limit=limit,
+                source=source,
+                edinet_lookback_days=history_days,
+            )
+        return success(
+            {
+                "filings": [filing_summary(filing) for filing in filings],
+                "count": len(filings),
+            },
+            next_steps=(
+                "Use filing_outline with a filing id before requesting content.",
+                "Use filing_financials when structured statements answer the question.",
+            ),
         )
-    return [filing.model_dump(mode="json") for filing in filings]
+    except (OpenFilingsError, ValueError) as exc:
+        return _request_failure(exc)
 
 
 @mcp.tool()
-async def filing_markdown(
+async def filing_outline(
     filing_id: str,
+    limit: int = 100,
     refresh: bool = False,
-    ocr_mode: OcrMode | None = None,
 ) -> dict[str, Any]:
-    """Retrieve one filing as Markdown, using the local cache when possible."""
+    """Return headings and sizes only, allowing targeted section selection."""
 
-    async with OpenFilingsService.from_settings() as service:
-        content = await service.get_filing_markdown(
-            filing_id,
-            refresh=refresh,
-            ocr_mode=ocr_mode,
+    try:
+        validate_limit(limit, maximum=MAX_OUTLINE_SECTIONS)
+        async with OpenFilingsService.from_settings() as service:
+            document = await service.get_filing_document(
+                filing_id,
+                refresh=refresh,
+            )
+        selected = document.sections[:limit]
+        return success(
+            {
+                "filing_id": filing_id,
+                "sections": [section_summary(section) for section in selected],
+                "section_count": len(document.sections),
+                "truncated": len(selected) < len(document.sections),
+            },
+            next_steps=(
+                "Use filing_read with one section title.",
+                "Use filing_search when the relevant section is unknown.",
+            ),
         )
-    return content.model_dump(mode="json")
+    except (OpenFilingsError, ValueError) as exc:
+        return _request_failure(exc)
 
 
 @mcp.tool()
@@ -74,38 +139,207 @@ async def filing_sections(
     filing_id: str,
     query: str | None = None,
     limit: int = 20,
-) -> list[dict[str, Any]]:
-    """List or search navigable Markdown sections in one filing."""
+) -> dict[str, Any]:
+    """Compatibility outline tool; returns headings without section bodies."""
 
-    async with OpenFilingsService.from_settings() as service:
-        document = await service.get_filing_document(filing_id)
-    sections = (
-        document.search(query, limit=limit) if query else document.sections[:limit]
-    )
-    return [
-        {
-            "title": section.title,
-            "level": section.level,
-            "start_line": section.start_line,
-            "markdown": section.markdown,
-        }
-        for section in sections
-    ]
+    try:
+        validate_limit(limit, maximum=MAX_OUTLINE_SECTIONS)
+        async with OpenFilingsService.from_settings() as service:
+            document = await service.get_filing_document(filing_id)
+        sections = (
+            document.search(query, limit=limit) if query else document.sections[:limit]
+        )
+        return success(
+            {
+                "filing_id": filing_id,
+                "sections": [section_summary(section) for section in sections],
+                "count": len(sections),
+            },
+            next_steps=("Use filing_read to retrieve one selected section.",),
+        )
+    except (OpenFilingsError, ValueError) as exc:
+        return _request_failure(exc)
+
+
+@mcp.tool()
+async def filing_read(
+    filing_id: str,
+    section: str,
+    offset: int = 0,
+    max_chars: int = 6_000,
+    refresh: bool = False,
+) -> dict[str, Any]:
+    """Read one named filing section through a bounded, paginated response."""
+
+    try:
+        async with OpenFilingsService.from_settings() as service:
+            document = await service.get_filing_document(
+                filing_id,
+                refresh=refresh,
+            )
+        selected = document.section(section)
+        if selected is None:
+            available = [item.title for item in document.sections[:20]]
+            return failure(
+                f"No section matched {section!r}.",
+                error_code="SECTION_NOT_FOUND",
+                suggestions=[f"Available sections: {', '.join(available)}"],
+            )
+        window = text_window(selected.markdown, offset=offset, max_chars=max_chars)
+        return success(
+            {
+                "filing_id": filing_id,
+                "title": selected.title,
+                "level": selected.level,
+                "start_line": selected.start_line,
+                "markdown": window.text,
+                **window.metadata(),
+            },
+            next_steps=_pagination_step(window.next_offset, "filing_read"),
+        )
+    except (OpenFilingsError, ValueError) as exc:
+        return _request_failure(exc)
+
+
+@mcp.tool()
+async def filing_search(
+    filing_id: str,
+    query: str,
+    limit: int = 5,
+    snippet_chars: int = 1_200,
+) -> dict[str, Any]:
+    """Search one filing and return ranked, bounded excerpts."""
+
+    try:
+        validate_limit(limit, maximum=MAX_SEARCH_RESULTS)
+        validate_limit(
+            snippet_chars,
+            maximum=MAX_SNIPPET_CHARS,
+            name="snippet_chars",
+        )
+        async with OpenFilingsService.from_settings() as service:
+            document = await service.get_filing_document(filing_id)
+        matches = document.ranked_search(query, limit=limit)
+        results = [
+            {
+                **section_summary(match.section),
+                "score": match.score,
+                "matched_terms": list(match.matched_terms),
+                "snippet": query_excerpt(
+                    match.section.text,
+                    query,
+                    max_chars=snippet_chars,
+                ),
+            }
+            for match in matches
+        ]
+        return success(
+            {
+                "filing_id": filing_id,
+                "query": query,
+                "results": results,
+                "count": len(results),
+            },
+            next_steps=("Use filing_read with a result title for more context.",),
+        )
+    except (OpenFilingsError, ValueError) as exc:
+        return _request_failure(exc)
+
+
+@mcp.tool()
+async def filing_markdown(
+    filing_id: str,
+    offset: int = 0,
+    max_chars: int = 12_000,
+    refresh: bool = False,
+    ocr_mode: OcrMode | None = None,
+) -> dict[str, Any]:
+    """Read a bounded Markdown page; prefer outline, search, or section tools."""
+
+    try:
+        async with OpenFilingsService.from_settings() as service:
+            content = await service.get_filing_markdown(
+                filing_id,
+                refresh=refresh,
+                ocr_mode=ocr_mode,
+            )
+        window = text_window(content.markdown, offset=offset, max_chars=max_chars)
+        return success(
+            {
+                "filing_id": filing_id,
+                "markdown": window.text,
+                **window.metadata(),
+                "source_url": content.source_url,
+                "media_type": content.media_type,
+                "extraction_method": content.extraction_method,
+                "quality": {
+                    "score": content.quality.score,
+                    "status": content.quality.status,
+                    "warnings": list(content.quality.warnings),
+                },
+                "from_cache": content.from_cache,
+            },
+            next_steps=_pagination_step(window.next_offset, "filing_markdown"),
+        )
+    except (OpenFilingsError, ValueError) as exc:
+        return _request_failure(exc)
 
 
 @mcp.tool()
 async def filing_financials(
     filing_id: str,
+    statements: list[StatementType] | None = None,
+    periods: int = 4,
+    detail: Literal["minimal", "standard", "full"] = "standard",
+    max_line_items: int = 40,
     refresh: bool = False,
 ) -> dict[str, Any]:
-    """Extract normalized statements from tagged filings or supported PDFs."""
+    """Return selected statements with bounded periods and line items."""
 
-    async with OpenFilingsService.from_settings() as service:
-        financials = await service.get_filing_financials(
-            filing_id,
-            refresh=refresh,
+    try:
+        validate_limit(periods, maximum=MAX_FINANCIAL_PERIODS, name="periods")
+        validate_limit(
+            max_line_items,
+            maximum=MAX_FINANCIAL_LINE_ITEMS,
+            name="max_line_items",
         )
-    return financials.model_dump(mode="json")
+        async with OpenFilingsService.from_settings() as service:
+            financials = await service.get_filing_financials(
+                filing_id,
+                refresh=refresh,
+            )
+        return success(
+            financials_view(
+                financials,
+                statements=statements,
+                periods=periods,
+                detail=detail,
+                max_line_items=max_line_items,
+            ),
+            next_steps=(
+                "Request only the needed statement and reduce periods or line items "
+                "when a smaller response is sufficient.",
+            ),
+        )
+    except (OpenFilingsError, ValueError) as exc:
+        return _request_failure(exc)
+
+
+def _request_failure(exc: Exception) -> dict[str, Any]:
+    return failure(
+        str(exc),
+        error_code=type(exc).__name__.upper(),
+        suggestions=(
+            "Check identifiers and parameter limits.",
+            "Use companies_search and filings_list to resolve stable ids.",
+        ),
+    )
+
+
+def _pagination_step(next_offset: int | None, tool_name: str) -> tuple[str, ...]:
+    if next_offset is None:
+        return ()
+    return (f"Call {tool_name} again with offset={next_offset} to continue.",)
 
 
 def run() -> None:

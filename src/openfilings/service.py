@@ -9,13 +9,19 @@ from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime, timedelta
 from typing import Any, TypeVar, cast
 
-from openfilings.adapters.base import SourceDocument
+from openfilings.adapters.base import PublicMarketClient, SourceDocument
+from openfilings.adapters.bmv import BmvClient
+from openfilings.adapters.cninfo import CninfoClient
 from openfilings.adapters.cvm import CvmClient
 from openfilings.adapters.edinet import EdinetClient
 from openfilings.adapters.esef import ENABLED_ESEF_MARKETS, EsefClient
 from openfilings.adapters.fca_nsm import FcaNsmClient
 from openfilings.adapters.hkex import HkexClient
+from openfilings.adapters.nse import NseClient
+from openfilings.adapters.sedar import SedarClient
+from openfilings.adapters.sfc import SfcClient
 from openfilings.adapters.sgx import SgxClient
+from openfilings.adapters.smv import SmvClient
 from openfilings.adapters.twse import TwseClient
 from openfilings.config import Settings
 from openfilings.domain import FilingDocument
@@ -32,6 +38,7 @@ from openfilings.extraction.html import html_to_markdown
 from openfilings.extraction.ocr import ocr_pdf_to_markdown, tesseract_available
 from openfilings.extraction.pdf import pdf_to_markdown
 from openfilings.models import (
+    SUPPORTED_SOURCE_NAMES,
     CachePruneResult,
     CacheStats,
     Company,
@@ -69,6 +76,7 @@ class OpenFilingsService:
         twse_source: TwseClient | None = None,
         hkex_source: HkexClient | None = None,
         sgx_source: SgxClient | None = None,
+        market_sources: tuple[PublicMarketClient, ...] = (),
         converter: Callable[[bytes], str] = pdf_to_markdown,
         html_converter: Callable[[bytes], str] = html_to_markdown,
         ocr_converter: OcrConverter = ocr_pdf_to_markdown,
@@ -88,6 +96,10 @@ class OpenFilingsService:
         self._twse = twse_source
         self._hkex = hkex_source
         self._sgx = sgx_source
+        self._market_sources = market_sources
+        self._market_sources_by_name = {
+            market_source.source: market_source for market_source in market_sources
+        }
         self._cache = cache
         self._pdf_converter = converter
         self._html_converter = html_converter
@@ -137,6 +149,32 @@ class OpenFilingsService:
             timeout_seconds=settings.request_timeout_seconds,
             max_retries=settings.max_retries,
         )
+        market_sources: tuple[PublicMarketClient, ...] = (
+            BmvClient(
+                timeout_seconds=settings.request_timeout_seconds,
+                max_retries=settings.max_retries,
+            ),
+            NseClient(
+                timeout_seconds=settings.request_timeout_seconds,
+                max_retries=settings.max_retries,
+            ),
+            SedarClient(
+                timeout_seconds=settings.request_timeout_seconds,
+                max_retries=settings.max_retries,
+            ),
+            CninfoClient(
+                timeout_seconds=settings.request_timeout_seconds,
+                max_retries=settings.max_retries,
+            ),
+            SmvClient(
+                timeout_seconds=settings.request_timeout_seconds,
+                max_retries=settings.max_retries,
+            ),
+            SfcClient(
+                timeout_seconds=settings.request_timeout_seconds,
+                max_retries=settings.max_retries,
+            ),
+        )
         cache = SQLiteCache(settings.database_path)
         return cls(
             cache,
@@ -147,6 +185,7 @@ class OpenFilingsService:
             twse_source=twse,
             hkex_source=hkex,
             sgx_source=sgx,
+            market_sources=market_sources,
             ocr_mode=settings.ocr_mode,
             ocr_language=settings.ocr_language,
             ocr_dpi=settings.ocr_dpi,
@@ -179,6 +218,8 @@ class OpenFilingsService:
             await self._hkex.aclose()
         if self._sgx is not None:
             await self._sgx.aclose()
+        for market_source in self._market_sources:
+            await market_source.aclose()
         self._cache.close()
 
     async def search_companies(
@@ -232,6 +273,12 @@ class OpenFilingsService:
                     raise ConfigurationError("The SGX source is not configured.")
             else:
                 calls.append(self._sgx.search_companies(query, limit=limit))
+        for source_name, market_source in self._market_sources_by_name.items():
+            if selection in {"all", source_name}:
+                calls.append(market_source.search_companies(query, limit=limit))
+
+        if selection != "all" and not calls:
+            raise ConfigurationError(f"The {selection} source is not configured.")
 
         results = await self._gather_available(calls)
         companies = self._merge_companies(
@@ -407,6 +454,20 @@ class OpenFilingsService:
         elif selection == "sgx":
             raise ConfigurationError(
                 "Expected a Singapore company ID shaped like sg_sgx_{IBM_code}."
+            )
+
+        market_source = self._market_source_for_company(company_id, selection)
+        if market_source is not None:
+            calls.append(
+                market_source.list_filings(
+                    company_id,
+                    category=category,
+                    limit=limit,
+                )
+            )
+        elif selection in self._market_sources_by_name:
+            raise ConfigurationError(
+                f"The company ID does not belong to the {selection} source."
             )
 
         results = await self._gather_available(calls)
@@ -693,6 +754,19 @@ class OpenFilingsService:
                 "SGX filing metadata is not cached. List the Singapore company's "
                 "filings before fetching the document."
             )
+        market_source = next(
+            (
+                source
+                for source in self._market_sources
+                if source.matches_filing_id(filing_id)
+            ),
+            None,
+        )
+        if market_source is not None:
+            raise FilingNotFoundError(
+                f"{market_source.source.upper()} filing metadata is not cached. "
+                "List the company's filings before fetching the document."
+            )
 
         raise FilingNotFoundError(f"Unsupported filing ID: {filing_id}.")
 
@@ -726,6 +800,9 @@ class OpenFilingsService:
             if self._sgx is None:
                 raise ConfigurationError("The SGX source is not configured.")
             return await self._sgx.download_document(filing.document_id or "")
+        market_source = self._market_sources_by_name.get(filing.source)
+        if market_source is not None:
+            return await market_source.download_document(filing.document_id or "")
         raise DocumentUnavailableError(f"Unsupported filing source: {filing.source}.")
 
     async def _list_edinet_filings(
@@ -868,21 +945,31 @@ class OpenFilingsService:
     @staticmethod
     def _validate_source(source: str) -> SourceSelection:
         normalized = source.strip().casefold().replace("-", "_")
-        if normalized not in {
-            "all",
-            "fca_nsm",
-            "edinet",
-            "esef",
-            "cvm",
-            "twse",
-            "hkex",
-            "sgx",
-        }:
-            raise ConfigurationError(
-                "Source must be one of: all, fca_nsm, edinet, esef, cvm, twse, "
-                "hkex, sgx."
+        supported = {"all", *SUPPORTED_SOURCE_NAMES}
+        if normalized not in supported:
+            source_names = (
+                "all, fca_nsm, edinet, esef, cvm, twse, hkex, sgx, bmv, nse, "
+                "sedar, cninfo, smv, sfc"
             )
+            raise ConfigurationError(f"Source must be one of: {source_names}.")
         return cast(SourceSelection, normalized)
+
+    def _market_source_for_company(
+        self,
+        company_id: str,
+        selection: SourceSelection,
+    ) -> PublicMarketClient | None:
+        if selection != "all":
+            source = self._market_sources_by_name.get(selection)
+            return source if source and source.matches_company_id(company_id) else None
+        return next(
+            (
+                source
+                for source in self._market_sources
+                if source.matches_company_id(company_id)
+            ),
+            None,
+        )
 
     @staticmethod
     def _is_nsm_company_id(company_id: str) -> bool:

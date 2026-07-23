@@ -7,11 +7,13 @@ from collections import Counter, defaultdict
 from datetime import date
 
 from openfilings.adapters.base import SourceDocument
+from openfilings.bmv_json import parse_bmv_json_xbrl
 from openfilings.exceptions import FinancialsUnavailableError
 from openfilings.extraction.document import (
     html_documents_from_zip,
     main_html_from_zip,
 )
+from openfilings.extraction.html import html_to_markdown
 from openfilings.models import (
     Filing,
     FilingFinancials,
@@ -21,12 +23,12 @@ from openfilings.models import (
     ReportingPeriod,
     StatementType,
 )
-from openfilings.xbrl.mappings import (
-    LINE_ITEMS,
-    definition_for_concept,
-)
+from openfilings.xbrl.mappings import LINE_ITEMS, definition_for_concept
 from openfilings.xbrl.parser import ParsedXbrl, XbrlContext, XbrlFact, parse_inline_xbrl
-from openfilings.xbrl.pdf_statements import extract_pdf_source_financials
+from openfilings.xbrl.pdf_statements import (
+    extract_pdf_source_financials,
+    extract_pdf_table_financials,
+)
 
 _HTML_TYPES = {"text/html", "application/xhtml+xml"}
 _ZIP_TYPES = {"application/zip", "application/x-zip-compressed"}
@@ -60,9 +62,20 @@ def extract_filing_financials(
             source_url=document.source_url,
             sha256=hashlib.sha256(document.data).hexdigest(),
         )
+    if document.profile == "smv":
+        return extract_pdf_table_financials(
+            html_to_markdown(document.data),
+            filing,
+            source_url=document.source_url,
+            sha256=hashlib.sha256(document.data).hexdigest(),
+            extraction_method="smv-open-data-tables",
+        )
 
-    report = _inline_report(document, filing)
-    parsed = parse_inline_xbrl(report)
+    parsed = (
+        parse_bmv_json_xbrl(document.data)
+        if document.profile == "bmv-json"
+        else parse_inline_xbrl(_inline_report(document, filing))
+    )
     statements = _build_statements(parsed)
     if not statements:
         raise FinancialsUnavailableError(

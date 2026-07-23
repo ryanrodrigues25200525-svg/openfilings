@@ -13,12 +13,53 @@ class DomainModel(BaseModel):
     model_config = ConfigDict(extra="ignore", frozen=True)
 
 
-SourceName = Literal["fca_nsm", "edinet", "esef", "cvm", "twse", "hkex", "sgx"]
+SourceName = Literal[
+    "fca_nsm",
+    "edinet",
+    "esef",
+    "cvm",
+    "twse",
+    "hkex",
+    "sgx",
+    "bmv",
+    "nse",
+    "sedar",
+    "cninfo",
+    "smv",
+    "sfc",
+]
 SourceSelection = Literal[
-    "all", "fca_nsm", "edinet", "esef", "cvm", "twse", "hkex", "sgx"
+    "all",
+    "fca_nsm",
+    "edinet",
+    "esef",
+    "cvm",
+    "twse",
+    "hkex",
+    "sgx",
+    "bmv",
+    "nse",
+    "sedar",
+    "cninfo",
+    "smv",
+    "sfc",
 ]
 SUPPORTED_SOURCE_NAMES = frozenset(
-    {"fca_nsm", "edinet", "esef", "cvm", "twse", "hkex", "sgx"}
+    {
+        "fca_nsm",
+        "edinet",
+        "esef",
+        "cvm",
+        "twse",
+        "hkex",
+        "sgx",
+        "bmv",
+        "nse",
+        "sedar",
+        "cninfo",
+        "smv",
+        "sfc",
+    }
 )
 MarketCode = Annotated[str, Field(pattern=r"^[A-Z]{2}$")]
 CountryCode = Annotated[str, Field(pattern=r"^[A-Z]{2}$")]

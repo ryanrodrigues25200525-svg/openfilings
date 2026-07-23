@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from openfilings.adapters.base import SourceDocument
+from openfilings.bmv_json import bmv_json_to_markdown
 from openfilings.exceptions import ExtractionError
 from openfilings.extraction.html import html_to_markdown
 from openfilings.extraction.ocr import ocr_pdf_to_markdown, tesseract_available
@@ -77,7 +78,10 @@ def extract_document(
             quality=assess_markdown(markdown),
         )
     if media_type in _ZIP_TYPES or document.data.startswith(b"PK\x03\x04"):
-        if document.profile == "edinet":
+        if document.profile == "bmv-json":
+            markdown = bmv_json_to_markdown(document.data)
+            method = "bmv-xbrl-json"
+        elif document.profile == "edinet":
             reports = html_documents_from_zip(document.data, public_documents_only=True)
             parts = [html_converter(report).strip() for report in reports]
             markdown = "\n\n---\n\n".join(part for part in parts if part)

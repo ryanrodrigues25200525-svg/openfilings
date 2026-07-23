@@ -1,9 +1,8 @@
 # OpenFilings
 
-OpenFilings is a lightweight, local-first tool for searching listed UK,
-Japanese, Brazilian, Taiwanese, Hong Kong, Singapore, Netherlands, French,
-Spanish, Italian, Danish, Swedish, and Finnish companies, listing public
-filings, and converting source documents into Markdown for LLMs.
+OpenFilings is a lightweight, local-first tool for searching listed companies
+across Europe, Asia, and the Americas, listing public filings, and converting
+source documents into Markdown for LLMs.
 
 ## What works
 
@@ -19,6 +18,9 @@ filings, and converting source documents into Markdown for LLMs.
 - List and download HKEXnews annual and interim reports without a key
 - Search current SGX Mainboard and Catalist companies while excluding non-stock products
 - List and download SGX annual reports without a key
+- Search BMV, NSE, mainland Chinese, Peruvian, and Colombian listed issuers
+- List and download their public annual or interim financial reports without a key
+- Search TSX and TSXV operating companies through the official TSX directory
 - List and download keyless Inline XBRL financial reports from filings.xbrl.org
 - List EDINET annual, semiannual, quarterly, and current reports
 - Resolve listed-company names to legal entity identifiers (LEIs)
@@ -37,10 +39,11 @@ filings, and converting source documents into Markdown for LLMs.
 - Enforce a logical cache limit and reclaim space with a cleanup command
 - Use the same operations from the CLI or an MCP server
 
-All seven filing-feed families are free. FCA, European ESEF, Brazilian CVM,
-Taiwan TWSE/MOPS, Hong Kong HKEXnews, and Singapore SGX access need no key, and
-EDINET company search is also keyless. EDINET filing retrieval requires free
-API-key registration.
+All filing-feed families are free. FCA, European ESEF, CVM, TWSE/MOPS, HKEX,
+SGX, BMV, NSE, CNINFO, SMV, SFC, and TSX company discovery need no key. EDINET
+filing retrieval requires free API-key registration. SEDAR+ currently supports
+public filing search in a browser but blocks stable non-browser automation, so
+the Canada adapter is company-discovery only.
 
 ## Setup
 
@@ -207,9 +210,34 @@ uv run openfilings fetch sg_sgx_2J4PCEOQYA3WTBWP -o sgx-report.md
 uv run openfilings financials sg_sgx_2J4PCEOQYA3WTBWP -o sgx-financials.json
 ```
 
+Mexico, India, mainland China, Peru, and Colombia use keyless official exchange
+or regulator data. Each example begins with a live company search; pass the
+returned ID to `filings`:
+
+```bash
+uv run openfilings search "AMX" --source bmv
+uv run openfilings search "RELIANCE" --source nse
+uv run openfilings search "600519" --source cninfo
+uv run openfilings search "Alicorp" --source smv
+uv run openfilings search "Ecopetrol" --source sfc
+```
+
+BMV annual PDFs and quarterly IFRS JSON archives both convert to Markdown and
+normalized financial statements. Peru reads SMV statement tables through
+bounded official statement operations with limited request concurrency.
+
+Canada currently supports official TSX/TSXV listed-company discovery. Filing
+retrieval reports a clear SEDAR+ limitation instead of silently scraping an
+unstable browser session:
+
+```bash
+uv run openfilings search "SHOP" --source sedar
+```
+
 Use the real filing ID returned by `filings` in the last two commands. Available
 source values are `all`, `fca-nsm`, `edinet`, `esef`, `cvm`, `twse`, `hkex`,
-and `sgx`. Use `--output report.md` with `fetch` to save Markdown. Set
+`sgx`, `bmv`, `nse`, `sedar`, `cninfo`, `smv`, and `sfc`. Use
+`--output report.md` with `fetch` to save Markdown. Set
 `OPENFILINGS_DATA_DIR` to move the SQLite cache; it defaults to `.openfilings`
 in the current directory.
 
@@ -277,11 +305,21 @@ dimensions. The lower-level `OpenFilingsService`, normalized models, and raw
 
 ## MCP tools
 
-- `companies_search(query, limit=10, source="all")`
-- `filings_list(company_id, category="accounts", limit=25, source="all", history_days=120)`
-- `filing_markdown(filing_id, refresh=False, ocr_mode=None)`
-- `filing_sections(filing_id, query=None, limit=20)`
-- `filing_financials(filing_id, refresh=False)`
+- `companies_search(query, limit=5, source="all")`
+- `filings_list(company_id, category="accounts", limit=10, source="all", history_days=120)`
+- `filing_outline(filing_id, limit=100, refresh=False)`
+- `filing_read(filing_id, section, offset=0, max_chars=6000, refresh=False)`
+- `filing_search(filing_id, query, limit=5, snippet_chars=1200)`
+- `filing_financials(filing_id, statements=None, periods=4, detail="standard", max_line_items=40)`
+- `filing_markdown(filing_id, offset=0, max_chars=12000, refresh=False, ocr_mode=None)`
+
+The MCP interface uses progressive disclosure. Start with company and filing
+metadata, inspect a filing's outline, then read one section or retrieve short
+ranked excerpts. Full Markdown is paginated and capped at 24,000 characters per
+call. Financial responses can be restricted by statement, period, detail level,
+and line-item count. Every response includes a compact success envelope and
+suggested next steps where another focused call is useful. `filing_sections`
+remains as a compatibility alias that returns headings without section bodies.
 
 Start the stdio server with `uv run openfilings serve`.
 
@@ -291,8 +329,10 @@ Pull requests and main-branch changes run locked dependency installation, Ruff,
 the complete offline suite, Python 3.11–3.14 compatibility, wheel and source
 distribution builds, and installed-package smoke tests. CodeQL and a strict
 locked-dependency audit run separately. A scheduled keyless smoke job checks
-one listed issuer and current filing for FCA, ESEF, CVM, TWSE, HKEX, and SGX;
-Japan is intentionally excluded because its filing API requires a key.
+one listed issuer and current filing for FCA, ESEF, CVM, TWSE, HKEX, SGX, BMV,
+NSE, CNINFO, SMV, and SFC. Japan is excluded because its filing API requires a
+key; Canada is excluded because SEDAR+ permits browser search but not stable
+automated retrieval.
 
 Run the same local gates before a release:
 
@@ -339,6 +379,11 @@ Singapore search downloads SGX's roughly 0.13 MB stock list and 8.3 MB metadata
 feed once per process, then retains only normalized Mainboard and Catalist
 companies. Annual-report history uses one small paged query; validated PDFs use
 the shared 150 MB limit and are discarded after conversion.
+The new adapters request bounded official issuer and filing feeds on demand.
+Mexico, India, China, and Colombia download only selected filing PDFs or ZIPs;
+Peru renders normalized HTML statement tables directly from SMV's open datasets.
+Canada queries the small TSX/TSXV directory endpoints and does not automate
+SEDAR+ document retrieval.
 
 On Tesco's 2026 FCA ESEF filing (29.5 MB Inline XBRL), the structured parser ran
 in about 0.63 seconds with approximately 150 MB peak resident memory on the
@@ -401,6 +446,21 @@ The Singapore connector uses SGX's official keyless
 [financial-reports API](https://api.sgx.com/financialreports/v1.0). It joins
 stock counters to SGX issuer metadata, keeps Mainboard and Catalist companies,
 and validates both announcement-detail and PDF-attachment paths.
+
+Mexico uses BMV's official issuer and financial-information services. India
+uses NSE's listed-equity CSV and annual-report service. Mainland China combines
+the SSE listed-company directory with CNINFO's public issuer and announcement
+feeds. Peru uses SMV's open financial-statement datasets, and Colombia uses
+SFC/SIMEV's current BVC-equity and financial-report services. Each adapter
+filters out funds and other non-operating exchange products and validates
+document hosts before download.
+
+Canada uses the official TSX/TSXV company directory for issuer discovery.
+SEDAR+ document search is public in a normal browser, but its stateful callbacks
+and Radware anti-automation controls do not provide a stable public API
+contract. The adapter therefore fails explicitly for filing retrieval until
+such a feed is available; OpenFilings does not bypass the control or require a
+browser runtime.
 
 NSM materials remain subject to the FCA's terms and the rights attached to each
 filed document. PyMuPDF4LLM and PyMuPDF are AGPL-3.0 licensed; review their
