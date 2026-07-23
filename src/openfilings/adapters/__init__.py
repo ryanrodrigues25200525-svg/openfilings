@@ -2,6 +2,7 @@
 
 from openfilings.adapters.bmv import BmvClient
 from openfilings.adapters.cvm import CvmClient
+from openfilings.adapters.dart import DartClient
 from openfilings.adapters.edinet import EdinetClient
 from openfilings.adapters.esef import (
     DENMARK,
@@ -32,6 +33,7 @@ __all__ = [
     "SWEDEN",
     "BmvClient",
     "CvmClient",
+    "DartClient",
     "EdinetClient",
     "EsefClient",
     "EsefMarket",

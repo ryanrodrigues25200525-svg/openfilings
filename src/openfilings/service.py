@@ -12,6 +12,7 @@ from typing import Any, TypeVar, cast
 from openfilings.adapters.base import PublicMarketClient, SourceDocument
 from openfilings.adapters.bmv import BmvClient
 from openfilings.adapters.cvm import CvmClient
+from openfilings.adapters.dart import REPORT_CODE_PERIOD, DartClient
 from openfilings.adapters.edinet import EdinetClient
 from openfilings.adapters.esef import ENABLED_ESEF_MARKETS, EsefClient
 from openfilings.adapters.fca_nsm import FcaNsmClient
@@ -50,6 +51,7 @@ from openfilings.models import (
     FilingFinancials,
     FinancialStatement,
     OcrMode,
+    ReportingPeriod,
     SourceSelection,
 )
 from openfilings.resources import (
@@ -61,6 +63,7 @@ from openfilings.resources import (
 from openfilings.storage.sqlite import SQLiteCache
 from openfilings.xbrl import extract_filing_financials
 from openfilings.xbrl.cvm_structured import extract_cvm_structured_financials
+from openfilings.xbrl.dart_structured import extract_dart_structured_financials
 from openfilings.xbrl.extract import extract_nse_integrated_filing_financials
 from openfilings.xbrl.pdf_statements import extract_pdf_ocr_financials
 from openfilings.xbrl.sfc_cuif_structured import extract_sfc_cuif_balance_sheet
@@ -80,6 +83,7 @@ class OpenFilingsService:
         esef_sources: tuple[EsefClient, ...] = (),
         cvm_source: CvmClient | None = None,
         sgx_source: SgxClient | None = None,
+        dart_source: DartClient | None = None,
         market_sources: tuple[PublicMarketClient, ...] = (),
         converter: Callable[[bytes], str] = pdf_to_markdown,
         html_converter: Callable[[bytes], str] = html_to_markdown,
@@ -98,6 +102,7 @@ class OpenFilingsService:
         self._esef_sources = esef_sources
         self._cvm = cvm_source
         self._sgx = sgx_source
+        self._dart = dart_source
         self._market_sources = market_sources
         self._market_sources_by_name = {
             market_source.source: market_source for market_source in market_sources
@@ -143,6 +148,11 @@ class OpenFilingsService:
             timeout_seconds=settings.request_timeout_seconds,
             max_retries=settings.max_retries,
         )
+        dart = DartClient(
+            settings.dart_api_key,
+            timeout_seconds=settings.request_timeout_seconds,
+            max_retries=settings.max_retries,
+        )
         market_sources: tuple[PublicMarketClient, ...] = (
             BmvClient(
                 timeout_seconds=settings.request_timeout_seconds,
@@ -173,6 +183,7 @@ class OpenFilingsService:
             esef_sources=esef_sources,
             cvm_source=cvm,
             sgx_source=sgx,
+            dart_source=dart,
             market_sources=market_sources,
             ocr_mode=settings.ocr_mode,
             ocr_language=settings.ocr_language,
@@ -202,6 +213,8 @@ class OpenFilingsService:
             await self._cvm.aclose()
         if self._sgx is not None:
             await self._sgx.aclose()
+        if self._dart is not None:
+            await self._dart.aclose()
         for market_source in self._market_sources:
             await market_source.aclose()
         self._cache.close()
@@ -245,6 +258,12 @@ class OpenFilingsService:
                     raise ConfigurationError("The SGX source is not configured.")
             else:
                 calls.append(self._sgx.search_companies(query, limit=limit))
+        if selection in {"all", "dart"}:
+            if self._dart is None:
+                if selection == "dart":
+                    raise ConfigurationError("The DART source is not configured.")
+            else:
+                calls.append(self._dart.search_companies(query, limit=limit))
         for source_name, market_source in self._market_sources_by_name.items():
             if selection in {"all", source_name}:
                 calls.append(market_source.search_companies(query, limit=limit))
@@ -405,6 +424,21 @@ class OpenFilingsService:
         elif selection == "sgx":
             raise ConfigurationError(
                 "Expected a Singapore company ID shaped like sg_sgx_{IBM_code}."
+            )
+
+        if selection in {"all", "dart"} and self._is_dart_company_id(company_id):
+            if self._dart is None:
+                raise ConfigurationError("The DART source is not configured.")
+            calls.append(
+                self._dart.list_filings(
+                    company_id,
+                    category=category,
+                    limit=limit,
+                )
+            )
+        elif selection == "dart":
+            raise ConfigurationError(
+                "Expected a Korean company ID shaped like kr_dart_00126380."
             )
 
         market_source = self._market_source_for_company(company_id, selection)
@@ -674,6 +708,13 @@ class OpenFilingsService:
                 self._enforce_cache_limit()
                 return structured
 
+        if filing.source == "dart":
+            structured = await self._extract_dart_structured_financials(filing)
+            if structured is not None:
+                self._cache.put_financials(structured)
+                self._enforce_cache_limit()
+                return structured
+
         if filing.source == "nse":
             structured = await self._extract_nse_structured_financials(filing)
             if structured is not None:
@@ -858,6 +899,67 @@ class OpenFilingsService:
         except FinancialsUnavailableError:
             return None
 
+    async def _extract_dart_structured_financials(
+        self, filing: Filing
+    ) -> FilingFinancials | None:
+        """Prefer DART's fnlttSinglAcntAll.json over the filing's zipped
+        report package - it's already tagged to IFRS-XBRL standard account
+        IDs, so it doesn't need any DART-specific parsing at all. Falls back
+        to None (letting the caller use the downloaded document) if the
+        company or period isn't covered, or if it has no recognized IFRS
+        accounts."""
+
+        if self._dart is None or filing.period_end is None:
+            return None
+        match = re.fullmatch(r"kr_dart_(\d{8})", filing.company_id, re.IGNORECASE)
+        if match is None:
+            return None
+        corp_code = match.group(1)
+        reprt_code = next(
+            (
+                code
+                for code, (_, month, day) in REPORT_CODE_PERIOD.items()
+                if (month, day) == (filing.period_end.month, filing.period_end.day)
+            ),
+            None,
+        )
+        if reprt_code is None:
+            return None
+        bsns_year = str(filing.period_end.year)
+        rows = await self._dart.financial_statements(
+            corp_code, bsns_year=bsns_year, reprt_code=reprt_code, fs_div="CFS"
+        )
+        if not rows:
+            rows = await self._dart.financial_statements(
+                corp_code, bsns_year=bsns_year, reprt_code=reprt_code, fs_div="OFS"
+            )
+        if not rows:
+            return None
+        fiscal_period, _, _ = REPORT_CODE_PERIOD[reprt_code]
+        period = ReportingPeriod(
+            id=f"dart-{fiscal_period.casefold()}-{filing.period_end.isoformat()}",
+            start_date=date(filing.period_end.year, 1, 1),
+            end_date=filing.period_end,
+            kind="duration",
+            fiscal_period=fiscal_period,
+        )
+        source_url = (
+            "https://opendart.fss.or.kr/api/fnlttSinglAcntAll.json?"
+            f"corp_code={corp_code}&bsns_year={bsns_year}&reprt_code={reprt_code}"
+        )
+        try:
+            return extract_dart_structured_financials(
+                rows,
+                filing,
+                period=period,
+                source_url=source_url,
+                sha256=hashlib.sha256(
+                    f"{filing.id}:{bsns_year}:{reprt_code}".encode()
+                ).hexdigest(),
+            )
+        except FinancialsUnavailableError:
+            return None
+
     async def _extract_ocr_financials(
         self,
         document: SourceDocument,
@@ -967,6 +1069,11 @@ class OpenFilingsService:
                 "SGX filing metadata is not cached. List the Singapore company's "
                 "filings before fetching the document."
             )
+        if filing_id.casefold().startswith("kr_dart_filing_"):
+            raise FilingNotFoundError(
+                "DART filing metadata is not cached. List the Korean company's "
+                "filings before fetching the document."
+            )
         market_source = next(
             (
                 source
@@ -1008,6 +1115,10 @@ class OpenFilingsService:
             if self._sgx is None:
                 raise ConfigurationError("The SGX source is not configured.")
             return await self._sgx.download_document(filing.document_id or "")
+        if filing.source == "dart":
+            if self._dart is None:
+                raise ConfigurationError("The DART source is not configured.")
+            return await self._dart.download_document(filing.document_id or "")
         market_source = self._market_sources_by_name.get(filing.source)
         if market_source is not None:
             return await market_source.download_document(filing.document_id or "")
@@ -1175,7 +1286,8 @@ class OpenFilingsService:
         supported = {"all", *SUPPORTED_SOURCE_NAMES}
         if normalized not in supported:
             source_names = (
-                "all, fca_nsm, edinet, esef, cvm, sgx, bmv, nse, sedar, smv, sfc"
+                "all, fca_nsm, edinet, esef, cvm, sgx, bmv, nse, sedar, smv, "
+                "sfc, dart"
             )
             raise ConfigurationError(f"Source must be one of: {source_names}.")
         return cast(SourceSelection, normalized)
@@ -1208,6 +1320,10 @@ class OpenFilingsService:
     @staticmethod
     def _is_sgx_company_id(company_id: str) -> bool:
         return company_id.casefold().startswith("sg_sgx_")
+
+    @staticmethod
+    def _is_dart_company_id(company_id: str) -> bool:
+        return company_id.casefold().startswith("kr_dart_")
 
     def _is_esef_company_id(self, company_id: str) -> bool:
         return self._esef_for_company_id(company_id) is not None

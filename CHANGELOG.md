@@ -40,6 +40,16 @@ All notable changes to OpenFilings are documented in this file.
   a schedule, instead of only when someone thinks to spot-check by hand.
   Coverage expanded to one issuer per ESEF jurisdiction (previously one
   for all of ESEF) plus company-search-only checks for Canada and Japan.
+- Added a South Korea connector for the Financial Supervisory Service's
+  OPENDART system: keyed company search over the official corp-code
+  registry, annual/semiannual/quarterly filing listing, and financial
+  statements read directly from `fnlttSinglAcntAll.json`'s IFRS-tagged
+  account rows (mapped through the existing IFRS concept table, no
+  DART-specific aliasing needed). `DART_API_KEY` is required for every
+  operation - DART has no keyless surface at all, unlike EDINET. Built
+  against DART's documented request/response shapes and verified with
+  mocked-response tests only; no live API key was available in this
+  session, so no live company or financial data has been verified.
 
 ### Fixed
 

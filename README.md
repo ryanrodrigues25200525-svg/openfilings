@@ -28,6 +28,9 @@ source documents into Markdown for LLMs.
 - Import a user-selected SEDAR+ generated URL or browser-downloaded Canadian PDF
 - List and download keyless Inline XBRL financial reports from filings.xbrl.org
 - List EDINET annual, semiannual, quarterly, and current reports
+- Search South Korean KOSPI/KOSDAQ issuers through the official DART corp-code registry
+- List DART annual, semiannual, and quarterly reports and prefer their
+  IFRS-XBRL-tagged financial-statement data over the filed document
 - Resolve listed-company names to legal entity identifiers (LEIs)
 - List regulated disclosures in one timeline
 - Download public PDF, HTML/XHTML, and tagged-report ZIP documents
@@ -50,9 +53,12 @@ source documents into Markdown for LLMs.
 
 All filing-feed families are free. FCA, European ESEF, CVM, SGX, BMV, NSE, SMV,
 SFC, and TSX company discovery need no key. EDINET filing retrieval requires
-free API-key registration. SEDAR+ discovery remains browser-based, but a
-generated public document URL or locally downloaded PDF can be imported without
-an account, API key, or browser runtime.
+free API-key registration. DART requires a free API key (immediate for
+individual sign-ups) for company search, filing history, and financial
+statements alike - unlike EDINET, DART has no keyless surface at all. SEDAR+
+discovery remains browser-based, but a generated public document URL or
+locally downloaded PDF can be imported without an account, API key, or
+browser runtime.
 
 ## Setup
 
@@ -64,10 +70,15 @@ Expose the keys for the sources you want to use:
 
 ```bash
 export EDINET_API_KEY="your-key"
+export DART_API_KEY="your-key"
 ```
 
 Never commit the key. `.env` is ignored, but OpenFilings intentionally does not
 load dotenv files implicitly.
+
+Register a DART key at [opendart.fss.or.kr](https://opendart.fss.or.kr) (인증키
+신청/관리 -> 인증키 신청) with an email sign-up; individual applicants receive
+the 40-character key immediately, with a 10,000-request daily allowance.
 
 Register through the [EDINET API registration
 page](https://api.edinet-fsa.go.jp/api/auth/index.aspx?mode=1).
@@ -432,6 +443,18 @@ specification](https://disclosure2dl.edinet-fsa.go.jp/guide/static/disclosure/do
 and [issuer-code
 archive](https://disclosure2dl.edinet-fsa.go.jp/searchdocument/codelist/Edinetcode.zip).
 It sends a subscription key only as an API parameter and never persists it.
+
+The South Korea connector uses the Financial Supervisory Service's official
+[OPENDART API](https://opendart.fss.or.kr/) - the `corpCode.xml` issuer
+registry, `list.json` disclosure search, and `fnlttSinglAcntAll.json`
+IFRS-tagged financial-statement endpoint. Unlike EDINET, DART has no keyless
+surface: company search, filing history, and financial statements all require
+`DART_API_KEY`. Financial-statement rows are matched to standardized line
+items through their `account_id` (DART's XBRL standard account ID, which for
+IFRS-XBRL filers is the literal `ifrs-full` taxonomy concept), so no
+DART-specific aliasing is needed. This integration was built against DART's
+documented request/response shapes and verified with mocked-response tests;
+it has not been exercised against a live API key.
 
 The Netherlands, France, Spain, Italy, Denmark, Sweden, Finland, Norway,
 Poland, Belgium, Austria, Luxembourg, and Portugal connectors use the free,
