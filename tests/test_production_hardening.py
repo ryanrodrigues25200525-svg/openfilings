@@ -14,12 +14,9 @@ def test_keyless_smoke_matrix_covers_every_enabled_source_except_edinet() -> Non
         "fca_nsm",
         "esef",
         "cvm",
-        "twse",
-        "hkex",
         "sgx",
         "bmv",
         "nse",
-        "cninfo",
         "smv",
         "sfc",
     }

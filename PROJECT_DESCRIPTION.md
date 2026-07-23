@@ -54,7 +54,7 @@ OpenFilings is not:
 
 ## Supported markets
 
-The current release covers 19 jurisdictions.
+The current release covers 16 jurisdictions.
 
 | Region | Jurisdiction | Source | Access status |
 |---|---|---|---|
@@ -67,11 +67,8 @@ The current release covers 19 jurisdictions.
 | Europe | Sweden | ESEF via filings.xbrl.org | Keyless |
 | Europe | Finland | ESEF via filings.xbrl.org | Keyless |
 | Asia | Japan | EDINET | Search is keyless; filing API needs a free key |
-| Asia | Taiwan | TWSE/MOPS | Keyless |
-| Asia | Hong Kong | HKEX/HKEXnews | Keyless |
 | Asia | Singapore | SGX | Keyless |
 | Asia | India | NSE | Keyless |
-| Asia | Mainland China | SSE/CNINFO | Keyless |
 | Americas | Brazil | CVM | Keyless |
 | Americas | Mexico | BMV | Keyless |
 | Americas | Canada | TSX/TSXV and SEDAR+ | Keyless discovery; explicit document import |

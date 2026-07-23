@@ -132,8 +132,8 @@ class PublicMarketClient(Protocol):
     async def aclose(self) -> None: ...
 ```
 
-FCA, EDINET, ESEF, CVM, TWSE, HKEX, and SGX predate the generic tuple of market
-adapters and are wired explicitly in the service. They still return the same
+FCA, EDINET, ESEF, CVM, and SGX predate the generic tuple of market adapters
+and are wired explicitly in the service. They still return the same
 normalized models and follow the same service pipeline.
 
 | Adapter | Coverage | Discovery and retrieval |
@@ -142,13 +142,10 @@ normalized models and follow the same service pipeline.
 | `EdinetClient` | Japan | EDINET issuer list; API key required for filing API |
 | `EsefClient` | NL, FR, ES, IT, DK, SE, FI | filings.xbrl.org ESEF index |
 | `CvmClient` | Brazil | CVM company register and IPE archive |
-| `TwseClient` | Taiwan | TWSE OpenAPI and MOPS |
-| `HkexClient` | Hong Kong | HKEX securities list and HKEXnews |
 | `SgxClient` | Singapore | SGX company and financial-report feeds |
 | `BmvClient` | Mexico | BMV issuer and financial-information services |
 | `NseClient` | India | NSE equity register and annual reports |
 | `SedarClient` | Canada | TSX/TSXV discovery and explicit SEDAR+ import |
-| `CninfoClient` | Mainland China | SSE directory and CNINFO announcements |
 | `SmvClient` | Peru | SMV issuer and financial-statement data |
 | `SfcClient` | Colombia | SFC/SIMEV issuer and filing services |
 

@@ -11,12 +11,10 @@ from typing import Any, TypeVar, cast
 
 from openfilings.adapters.base import PublicMarketClient, SourceDocument
 from openfilings.adapters.bmv import BmvClient
-from openfilings.adapters.cninfo import CninfoClient
 from openfilings.adapters.cvm import CvmClient
 from openfilings.adapters.edinet import EdinetClient
 from openfilings.adapters.esef import ENABLED_ESEF_MARKETS, EsefClient
 from openfilings.adapters.fca_nsm import FcaNsmClient
-from openfilings.adapters.hkex import HkexClient
 from openfilings.adapters.nse import NseClient
 from openfilings.adapters.sedar import (
     SedarClient,
@@ -26,7 +24,6 @@ from openfilings.adapters.sedar import (
 from openfilings.adapters.sfc import SfcClient
 from openfilings.adapters.sgx import SgxClient
 from openfilings.adapters.smv import SmvClient
-from openfilings.adapters.twse import TwseClient
 from openfilings.config import Settings
 from openfilings.domain import FilingDocument
 from openfilings.exceptions import (
@@ -77,8 +74,6 @@ class OpenFilingsService:
         edinet_source: EdinetClient | None = None,
         esef_sources: tuple[EsefClient, ...] = (),
         cvm_source: CvmClient | None = None,
-        twse_source: TwseClient | None = None,
-        hkex_source: HkexClient | None = None,
         sgx_source: SgxClient | None = None,
         market_sources: tuple[PublicMarketClient, ...] = (),
         converter: Callable[[bytes], str] = pdf_to_markdown,
@@ -97,8 +92,6 @@ class OpenFilingsService:
         self._edinet = edinet_source
         self._esef_sources = esef_sources
         self._cvm = cvm_source
-        self._twse = twse_source
-        self._hkex = hkex_source
         self._sgx = sgx_source
         self._market_sources = market_sources
         self._market_sources_by_name = {
@@ -141,14 +134,6 @@ class OpenFilingsService:
             timeout_seconds=settings.request_timeout_seconds,
             max_retries=settings.max_retries,
         )
-        twse = TwseClient(
-            timeout_seconds=settings.request_timeout_seconds,
-            max_retries=settings.max_retries,
-        )
-        hkex = HkexClient(
-            timeout_seconds=settings.request_timeout_seconds,
-            max_retries=settings.max_retries,
-        )
         sgx = SgxClient(
             timeout_seconds=settings.request_timeout_seconds,
             max_retries=settings.max_retries,
@@ -163,10 +148,6 @@ class OpenFilingsService:
                 max_retries=settings.max_retries,
             ),
             SedarClient(
-                timeout_seconds=settings.request_timeout_seconds,
-                max_retries=settings.max_retries,
-            ),
-            CninfoClient(
                 timeout_seconds=settings.request_timeout_seconds,
                 max_retries=settings.max_retries,
             ),
@@ -186,8 +167,6 @@ class OpenFilingsService:
             edinet_source=edinet,
             esef_sources=esef_sources,
             cvm_source=cvm,
-            twse_source=twse,
-            hkex_source=hkex,
             sgx_source=sgx,
             market_sources=market_sources,
             ocr_mode=settings.ocr_mode,
@@ -216,10 +195,6 @@ class OpenFilingsService:
             await esef.aclose()
         if self._cvm is not None:
             await self._cvm.aclose()
-        if self._twse is not None:
-            await self._twse.aclose()
-        if self._hkex is not None:
-            await self._hkex.aclose()
         if self._sgx is not None:
             await self._sgx.aclose()
         for market_source in self._market_sources:
@@ -259,18 +234,6 @@ class OpenFilingsService:
                     raise ConfigurationError("The CVM source is not configured.")
             else:
                 calls.append(self._cvm.search_companies(query, limit=limit))
-        if selection in {"all", "twse"}:
-            if self._twse is None:
-                if selection == "twse":
-                    raise ConfigurationError("The TWSE source is not configured.")
-            else:
-                calls.append(self._twse.search_companies(query, limit=limit))
-        if selection in {"all", "hkex"}:
-            if self._hkex is None:
-                if selection == "hkex":
-                    raise ConfigurationError("The HKEX source is not configured.")
-            else:
-                calls.append(self._hkex.search_companies(query, limit=limit))
         if selection in {"all", "sgx"}:
             if self._sgx is None:
                 if selection == "sgx":
@@ -414,36 +377,6 @@ class OpenFilingsService:
         elif selection == "cvm":
             raise ConfigurationError(
                 "Expected a Brazilian company ID shaped like br_cvm_{numeric_code}."
-            )
-
-        if selection in {"all", "twse"} and self._is_twse_company_id(company_id):
-            if self._twse is None:
-                raise ConfigurationError("The TWSE source is not configured.")
-            calls.append(
-                self._twse.list_filings(
-                    company_id,
-                    category=category,
-                    limit=limit,
-                )
-            )
-        elif selection == "twse":
-            raise ConfigurationError(
-                "Expected a Taiwan company ID shaped like tw_twse_{stock_code}."
-            )
-
-        if selection in {"all", "hkex"} and self._is_hkex_company_id(company_id):
-            if self._hkex is None:
-                raise ConfigurationError("The HKEX source is not configured.")
-            calls.append(
-                self._hkex.list_filings(
-                    company_id,
-                    category=category,
-                    limit=limit,
-                )
-            )
-        elif selection == "hkex":
-            raise ConfigurationError(
-                "Expected a Hong Kong company ID shaped like hk_hkex_{five-digit_code}."
             )
 
         if selection in {"all", "sgx"} and self._is_sgx_company_id(company_id):
@@ -846,15 +779,6 @@ class OpenFilingsService:
                 "CVM filing metadata is not cached. List the Brazilian company's "
                 "filings before fetching the document."
             )
-        if filing_id.casefold().startswith("tw_mops_"):
-            if self._twse is None:
-                raise ConfigurationError("The TWSE source is not configured.")
-            return await self._twse.get_filing(filing_id)
-        if filing_id.casefold().startswith("hk_hkex_"):
-            raise FilingNotFoundError(
-                "HKEX filing metadata is not cached. List the Hong Kong company's "
-                "filings before fetching the document."
-            )
         if filing_id.casefold().startswith("sg_sgx_"):
             raise FilingNotFoundError(
                 "SGX filing metadata is not cached. List the Singapore company's "
@@ -897,14 +821,6 @@ class OpenFilingsService:
             if self._cvm is None:
                 raise ConfigurationError("The CVM source is not configured.")
             return await self._cvm.download_document(filing.document_id or "")
-        if filing.source == "twse":
-            if self._twse is None:
-                raise ConfigurationError("The TWSE source is not configured.")
-            return await self._twse.download_document(filing.document_id or "")
-        if filing.source == "hkex":
-            if self._hkex is None:
-                raise ConfigurationError("The HKEX source is not configured.")
-            return await self._hkex.download_document(filing.document_id or "")
         if filing.source == "sgx":
             if self._sgx is None:
                 raise ConfigurationError("The SGX source is not configured.")
@@ -1076,8 +992,7 @@ class OpenFilingsService:
         supported = {"all", *SUPPORTED_SOURCE_NAMES}
         if normalized not in supported:
             source_names = (
-                "all, fca_nsm, edinet, esef, cvm, twse, hkex, sgx, bmv, nse, "
-                "sedar, cninfo, smv, sfc"
+                "all, fca_nsm, edinet, esef, cvm, sgx, bmv, nse, sedar, smv, sfc"
             )
             raise ConfigurationError(f"Source must be one of: {source_names}.")
         return cast(SourceSelection, normalized)
@@ -1111,14 +1026,6 @@ class OpenFilingsService:
     @staticmethod
     def _is_cvm_company_id(company_id: str) -> bool:
         return company_id.casefold().startswith("br_cvm_")
-
-    @staticmethod
-    def _is_twse_company_id(company_id: str) -> bool:
-        return company_id.casefold().startswith("tw_twse_")
-
-    @staticmethod
-    def _is_hkex_company_id(company_id: str) -> bool:
-        return company_id.casefold().startswith("hk_hkex_")
 
     @staticmethod
     def _is_sgx_company_id(company_id: str) -> bool:

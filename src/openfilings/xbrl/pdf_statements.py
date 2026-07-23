@@ -342,13 +342,10 @@ _CURRENCY_MARKERS = (
 )
 _DEFAULT_CURRENCY_BY_SOURCE = {
     "cvm": "BRL",
-    "hkex": "HKD",
     "sgx": "SGD",
-    "twse": "TWD",
     "bmv": "MXN",
     "nse": "INR",
     "sedar": "CAD",
-    "cninfo": "CNY",
     "smv": "PEN",
     "sfc": "COP",
 }

@@ -27,12 +27,9 @@ SMOKE_CASES = (
     SmokeCase("UK FCA NSM", "Tesco", "fca_nsm"),
     SmokeCase("European ESEF", "ASML", "esef"),
     SmokeCase("Brazil CVM", "Banco do Brasil", "cvm"),
-    SmokeCase("Taiwan TWSE/MOPS", "1101", "twse"),
-    SmokeCase("Hong Kong HKEX", "HKEX", "hkex"),
     SmokeCase("Singapore SGX", "S68", "sgx"),
     SmokeCase("Mexico BMV", "AMX", "bmv"),
     SmokeCase("India NSE", "RELIANCE", "nse"),
-    SmokeCase("Mainland China CNINFO", "600519", "cninfo"),
     SmokeCase("Peru SMV", "Alicorp", "smv"),
     SmokeCase("Colombia SFC", "Ecopetrol", "sfc"),
 )

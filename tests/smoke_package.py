@@ -10,7 +10,7 @@ from openfilings.server import mcp
 assert OpenFilings is OpenFilingsService
 assert app.info.name == "openfilings"
 assert "sgx" in SUPPORTED_SOURCE_NAMES
-assert {"bmv", "nse", "sedar", "cninfo", "smv", "sfc"} <= SUPPORTED_SOURCE_NAMES
+assert {"bmv", "nse", "sedar", "smv", "sfc"} <= SUPPORTED_SOURCE_NAMES
 assert {
     "filing_outline",
     "filing_read",

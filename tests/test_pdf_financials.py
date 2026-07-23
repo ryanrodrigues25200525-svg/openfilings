@@ -156,8 +156,8 @@ def test_pdf_table_extraction_covers_common_english_summary_labels() -> None:
 
     financials = extract_pdf_table_financials(
         markdown,
-        _filing(period_end=date(2024, 12, 31), source="twse", filing_type="annual"),
-        source_url="https://example.test/twse-report.pdf",
+        _filing(period_end=date(2024, 12, 31), source="sgx", filing_type="annual"),
+        source_url="https://example.test/summary-report.pdf",
         sha256="h" * 64,
     )
 
@@ -212,9 +212,9 @@ def test_aligned_pdf_text_finds_total_behind_unlabeled_segment_breakdown() -> No
     label before its own total row appears - the total must not be confused
     with the first segment's own values."""
     financials = extract_pdf_text_financials(
-        (_hkex_income_text(),),
-        _filing(period_end=date(2024, 12, 31), source="hkex", filing_type="annual"),
-        source_url="https://example.test/hkex-report.pdf",
+        (_segment_breakdown_income_text(),),
+        _filing(period_end=date(2024, 12, 31), source="sgx", filing_type="annual"),
+        source_url="https://example.test/segment-report.pdf",
         sha256="f" * 64,
     )
 
@@ -383,7 +383,7 @@ def test_image_only_pdf_reports_clear_ocr_requirement() -> None:
     with pytest.raises(FinancialsUnavailableError, match=r"image-only.*OCR"):
         extract_pdf_source_financials(
             pdf_bytes,
-            _filing(source="twse"),
+            _filing(source="sgx"),
             source_url="https://example.test/scanned.pdf",
             sha256="f" * 64,
         )
@@ -569,7 +569,7 @@ def _cvm_balance_sheet_text() -> str:
     """
 
 
-def _hkex_income_text() -> str:
+def _segment_breakdown_income_text() -> str:
     return """
     Consolidated Income Statement
     For the year ended 31 December 2024

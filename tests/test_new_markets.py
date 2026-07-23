@@ -10,7 +10,6 @@ import pytest
 
 from openfilings.adapters.base import SourceDocument
 from openfilings.adapters.bmv import BmvClient
-from openfilings.adapters.cninfo import CninfoClient
 from openfilings.adapters.nse import NseClient
 from openfilings.adapters.sedar import SedarClient
 from openfilings.adapters.sfc import SfcClient
@@ -165,73 +164,6 @@ async def test_nse_search_filings_and_download_are_indian_equities() -> None:
     assert document.media_type == "application/pdf"
 
 
-@pytest.mark.asyncio
-async def test_cninfo_covers_shanghai_and_shenzhen_annual_reports() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path.endswith("szse_stock.json"):
-            return httpx.Response(
-                200,
-                json={
-                    "stockList": [
-                        {
-                            "code": "000001",
-                            "category": "A股",
-                            "orgId": "gssz0000001",
-                            "zwjc": "平安银行",
-                        }
-                    ]
-                },
-            )
-        if request.url.host == "query.sse.com.cn":
-            return httpx.Response(
-                200,
-                json={
-                    "result": [
-                        {
-                            "A_STOCK_CODE": "600519",
-                            "FULL_NAME": "贵州茅台酒股份有限公司",
-                            "FULL_NAME_IN_ENGLISH": "Kweichow Moutai Co., Ltd.",
-                        }
-                    ]
-                },
-            )
-        if request.url.path.endswith("/hisAnnouncement/query"):
-            assert b"gssh0600519" in request.content
-            return httpx.Response(
-                200,
-                json={
-                    "announcements": [
-                        {
-                            "announcementId": "1222993920",
-                            "announcementTitle": "贵州茅台2024年年度报告",
-                            "announcementTime": 1743609600000,
-                            "adjunctUrl": "finalpage/2025-04-03/1222993920.PDF",
-                        },
-                        {
-                            "announcementId": "1222993919",
-                            "announcementTitle": "贵州茅台2024年年度报告摘要",
-                            "announcementTime": 1743609600000,
-                            "adjunctUrl": "finalpage/2025-04-03/1222993919.PDF",
-                        },
-                    ]
-                },
-            )
-        if request.url.host == "static.cninfo.com.cn":
-            return httpx.Response(200, content=b"%PDF-1.7 report")
-        raise AssertionError(f"Unexpected CNINFO request: {request.url}")
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        client = CninfoClient(client=http, today=lambda: date(2026, 7, 23))
-        shanghai = await client.search_companies("Kweichow Moutai")
-        shenzhen = await client.search_companies("000001")
-        filings = await client.list_filings(shanghai[0].id)
-        document = await client.download_document(filings[0].document_id or "")
-
-    assert shanghai[0].id == "cn_cninfo_sh_600519"
-    assert shenzhen[0].id == "cn_cninfo_sz_000001"
-    assert len(filings) == 1
-    assert filings[0].period_end == date(2024, 12, 31)
-    assert document.media_type == "application/pdf"
 
 
 @pytest.mark.asyncio

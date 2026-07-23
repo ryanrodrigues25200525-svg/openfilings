@@ -41,13 +41,10 @@ class SourceOption(StrEnum):
     edinet = "edinet"
     esef = "esef"
     cvm = "cvm"
-    twse = "twse"
-    hkex = "hkex"
     sgx = "sgx"
     bmv = "bmv"
     nse = "nse"
     sedar = "sedar"
-    cninfo = "cninfo"
     smv = "smv"
     sfc = "sfc"
 

@@ -4,6 +4,11 @@ All notable changes to OpenFilings are documented in this file.
 
 ## Unreleased
 
+### Removed
+
+- Removed Taiwan (TWSE/MOPS), Hong Kong (HKEX/HKEXnews), and mainland China
+  (SSE/CNINFO) support.
+
 ### Documentation
 
 - Added a complete system architecture document covering components, data

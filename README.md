@@ -20,13 +20,9 @@ source documents into Markdown for LLMs.
   ESEF issuers without a key
 - Search active Brazilian exchange-listed issuers from the official CVM register
 - List and download CVM annual and interim financial statements without a key
-- Search the official TWSE listed-company universe by code or Chinese/English name
-- List and download Chinese and English annual reports from TWSE/MOPS without a key
-- Search current HKEX Main Board and GEM issuers while excluding funds and warrants
-- List and download HKEXnews annual and interim reports without a key
 - Search current SGX Mainboard and Catalist companies while excluding non-stock products
 - List and download SGX annual reports without a key
-- Search BMV, NSE, mainland Chinese, Peruvian, and Colombian listed issuers
+- Search BMV, NSE, Peruvian, and Colombian listed issuers
 - List and download their public annual or interim financial reports without a key
 - Search TSX and TSXV operating companies through the official TSX directory
 - Import a user-selected SEDAR+ generated URL or browser-downloaded Canadian PDF
@@ -41,19 +37,19 @@ source documents into Markdown for LLMs.
 - Navigate extracted documents by heading and search within sections
 - Extract standardized income, balance-sheet, cash-flow, and comprehensive
   income statements from UK-GAAP, ESEF/IFRS, and EDINET Inline XBRL
-- Derive high-confidence normalized statements from aligned CVM, TWSE, HKEX,
-  and SGX PDF tables while preserving labels, periods, currencies, and scale
+- Derive high-confidence normalized statements from aligned CVM and SGX PDF
+  tables while preserving labels, periods, currencies, and scale
 - Score extraction quality with explainable warnings
 - Optionally route scanned PDFs through page-at-a-time Tesseract OCR
 - Reuse compressed Markdown and duplicate content through a SQLite cache
 - Enforce a logical cache limit and reclaim space with a cleanup command
 - Use the same operations from the CLI or an MCP server
 
-All filing-feed families are free. FCA, European ESEF, CVM, TWSE/MOPS, HKEX,
-SGX, BMV, NSE, CNINFO, SMV, SFC, and TSX company discovery need no key. EDINET
-filing retrieval requires free API-key registration. SEDAR+ discovery remains
-browser-based, but a generated public document URL or locally downloaded PDF can
-be imported without an account, API key, or browser runtime.
+All filing-feed families are free. FCA, European ESEF, CVM, SGX, BMV, NSE, SMV,
+SFC, and TSX company discovery need no key. EDINET filing retrieval requires
+free API-key registration. SEDAR+ discovery remains browser-based, but a
+generated public document URL or locally downloaded PDF can be imported without
+an account, API key, or browser runtime.
 
 ## Setup
 
@@ -183,32 +179,6 @@ uv run openfilings fetch br_cvm_1046308 -o banco-do-brasil-report.md
 uv run openfilings financials br_cvm_1046308 -o banco-do-brasil-financials.json
 ```
 
-Taiwan uses TWSE's keyless listed-company OpenAPI and MOPS document server.
-Common Chinese names, legal names, English abbreviations, and stock codes work:
-
-```bash
-uv run openfilings search "台泥" --source twse
-uv run openfilings filings tw_twse_1101 --source twse
-uv run openfilings fetch tw_mops_2025_1101_20260522FE4 -o tcc-report.md
-uv run openfilings financials tw_mops_2025_1101_20260522FE4 -o tcc-financials.json
-```
-
-Some TWSE English reports are image-only. With Tesseract installed, structured
-extraction automatically uses bounded page-at-a-time OCR. Without Tesseract,
-OpenFilings reports the limitation instead of returning empty tables.
-
-Hong Kong uses HKEX's current securities list and public HKEXnews title search.
-Only Main Board and GEM issuer equities are searchable; duplicate RMB counters,
-ETFs, warrants, investment companies, and other non-company products are
-excluded:
-
-```bash
-uv run openfilings search "HKEX" --source hkex
-uv run openfilings filings hk_hkex_00388 --source hkex
-uv run openfilings fetch hk_hkex_12052683 -o hkex-report.md
-uv run openfilings financials hk_hkex_12052683 -o hkex-financials.json
-```
-
 Singapore uses SGX's keyless stocks, market-metadata, and financial-reports
 feeds. Only Mainboard and Catalist stock counters are joined to issuer records;
 GlobalQuote counters and non-stock exchange products are excluded:
@@ -220,14 +190,13 @@ uv run openfilings fetch sg_sgx_2J4PCEOQYA3WTBWP -o sgx-report.md
 uv run openfilings financials sg_sgx_2J4PCEOQYA3WTBWP -o sgx-financials.json
 ```
 
-Mexico, India, mainland China, Peru, and Colombia use keyless official exchange
-or regulator data. Each example begins with a live company search; pass the
-returned ID to `filings`:
+Mexico, India, Peru, and Colombia use keyless official exchange or regulator
+data. Each example begins with a live company search; pass the returned ID to
+`filings`:
 
 ```bash
 uv run openfilings search "AMX" --source bmv
 uv run openfilings search "RELIANCE" --source nse
-uv run openfilings search "600519" --source cninfo
 uv run openfilings search "Alicorp" --source smv
 uv run openfilings search "Ecopetrol" --source sfc
 ```
@@ -267,8 +236,8 @@ the allowlist. Imports accept PDFs up to 100 MB. The compressed original shares
 the configured cache budget with Markdown and structured financials.
 
 Use the real filing ID returned by `filings` in the last two commands. Available
-source values are `all`, `fca-nsm`, `edinet`, `esef`, `cvm`, `twse`, `hkex`,
-`sgx`, `bmv`, `nse`, `sedar`, `cninfo`, `smv`, and `sfc`. Use
+source values are `all`, `fca-nsm`, `edinet`, `esef`, `cvm`, `sgx`, `bmv`, `nse`,
+`sedar`, `smv`, and `sfc`. Use
 `--output report.md` with `fetch` to save Markdown. Set
 `OPENFILINGS_DATA_DIR` to move the SQLite cache; it defaults to `.openfilings`
 in the current directory.
@@ -380,10 +349,10 @@ Pull requests and main-branch changes run locked dependency installation, Ruff,
 the complete offline suite, Python 3.11–3.14 compatibility, wheel and source
 distribution builds, and installed-package smoke tests. CodeQL and a strict
 locked-dependency audit run separately. A scheduled keyless smoke job checks
-one listed issuer and current filing for FCA, ESEF, CVM, TWSE, HKEX, SGX, BMV,
-NSE, CNINFO, SMV, and SFC. Japan is excluded because its filing API requires a
-key; Canada is excluded because SEDAR+ permits browser search but not stable
-automated retrieval.
+one listed issuer and current filing for FCA, ESEF, CVM, SGX, BMV, NSE, SMV,
+and SFC. Japan is excluded because its filing API requires a key; Canada is
+excluded because SEDAR+ permits browser search but not stable automated
+retrieval.
 
 Run the same local gates before a release:
 
@@ -419,13 +388,6 @@ Brazilian search downloads the roughly 1.4 MB CVM register once per process.
 Filing history reads up to five annual IPE ZIP indexes (currently about 1–2 MB
 each), retaining only normalized matching records; report PDFs remain bounded
 by the same 150 MB document limit and are discarded after conversion.
-Taiwan search downloads TWSE's listed-company JSON once per process. Annual
-history makes at most five small MOPS metadata requests by default and follows
-TWSE's validated one-time PDF handoff. The PDFs use the shared 150 MB limit.
-Hong Kong search downloads HKEX's roughly 1.3 MB securities workbook once per
-process and parses its XLSX/XML with the Python standard library. Filing history
-uses two small bounded HKEXnews queries for annual and interim reports; PDFs use
-the shared 150 MB limit.
 Singapore search downloads SGX's roughly 0.13 MB stock list and 8.3 MB metadata
 feed once per process, then retains only normalized Mainboard and Catalist
 companies. Annual-report history uses one small paged query; validated PDFs use
@@ -478,20 +440,6 @@ The Brazil connector uses the official keyless CVM
 filters the register to active operational issuers whose market type is
 `BOLSA`; document links remain on CVM's public RAD system.
 
-The Taiwan connector uses the official keyless TWSE
-[listed-company OpenAPI](https://openapi.twse.com.tw/) and the public
-[MOPS/TWSE document server](https://doc.twse.com.tw/server-java/t57sb01). It
-accepts only companies in TWSE's current listed-company dataset and validates
-both the stable document request and TWSE's generated PDF handoff before
-downloading.
-
-The Hong Kong connector uses HKEX's official
-[Full List of Securities](https://www.hkex.com.hk/eng/services/trading/securities/securitieslists/ListOfSecurities.xlsx)
-and public
-[HKEXnews Title Search](https://www1.hkexnews.hk/search/titlesearch.xhtml).
-It keeps only Main Board and GEM issuer equities, deduplicates alternate currency
-counters by ISIN, and validates every HKEXnews PDF path before downloading.
-
 The Singapore connector uses SGX's official keyless
 [corporate-information page](https://www.sgx.com/securities/corporate-information),
 [listed-stock API](https://api.sgx.com/securities/v1.1/stocks), and
@@ -500,12 +448,11 @@ stock counters to SGX issuer metadata, keeps Mainboard and Catalist companies,
 and validates both announcement-detail and PDF-attachment paths.
 
 Mexico uses BMV's official issuer and financial-information services. India
-uses NSE's listed-equity CSV and annual-report service. Mainland China combines
-the SSE listed-company directory with CNINFO's public issuer and announcement
-feeds. Peru uses SMV's open financial-statement datasets, and Colombia uses
-SFC/SIMEV's current BVC-equity and financial-report services. Each adapter
-filters out funds and other non-operating exchange products and validates
-document hosts before download.
+uses NSE's listed-equity CSV and annual-report service. Peru uses SMV's open
+financial-statement datasets, and Colombia uses SFC/SIMEV's current
+BVC-equity and financial-report services. Each adapter filters out funds and
+other non-operating exchange products and validates document hosts before
+download.
 
 Canada uses the official TSX/TSXV company directory for issuer discovery.
 SEDAR+ document search is public in a normal browser, but its stateful callbacks

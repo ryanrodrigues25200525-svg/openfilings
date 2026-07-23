@@ -128,9 +128,9 @@ async def test_image_only_financials_use_configured_ocr(tmp_path, monkeypatch) -
     pdf.close()
 
     filing = Filing(
-        id="tw_mops_scanned",
-        company_id="tw_twse_1101",
-        source="twse",
+        id="sg_sgx_scanned",
+        company_id="sg_sgx_1L01",
+        source="sgx",
         source_id="scanned",
         title="2025 Annual Report",
         category="accounts",
