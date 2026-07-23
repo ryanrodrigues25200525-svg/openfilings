@@ -7,6 +7,7 @@ import pytest
 
 from openfilings import server
 from openfilings.domain import FilingDocument
+from openfilings.exceptions import FinancialsUnavailableError
 from openfilings.models import (
     Company,
     Filing,
@@ -228,6 +229,30 @@ async def test_financials_support_statement_period_and_row_filters(
     assert statement["periods"] == ["FY 2025 2025-12-31"]
     assert len(statement["line_items"]) == 1
     assert statement["truncated"] is True
+
+
+@pytest.mark.asyncio
+async def test_financials_failure_points_to_manual_extraction_fallback(
+    fake_service: _FakeService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When structured extraction fails, the calling agent should be told
+    how to read the filing's own (already-converted) text directly instead
+    of just seeing a bare error - the document itself is still readable."""
+
+    async def raise_unavailable(*_: object, **__: object) -> FilingFinancials:
+        raise FinancialsUnavailableError(
+            "The PDF contains no high-confidence aligned statement text."
+        )
+
+    monkeypatch.setattr(fake_service, "get_filing_financials", raise_unavailable)
+
+    response = await server.filing_financials(fake_service.filing.id)
+
+    assert response["success"] is False
+    assert response["error_code"] == "FINANCIALSUNAVAILABLEERROR"
+    suggestions = " ".join(response["suggestions"])
+    assert "filing_search" in suggestions
+    assert "filing_markdown" in suggestions
 
 
 def _financials(filing: Filing) -> FilingFinancials:

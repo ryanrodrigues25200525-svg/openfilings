@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 from mcp.server.fastmcp import FastMCP
 
-from openfilings.exceptions import OpenFilingsError
+from openfilings.exceptions import FinancialsUnavailableError, OpenFilingsError
 from openfilings.mcp_support import (
     MAX_FINANCIAL_LINE_ITEMS,
     MAX_FINANCIAL_PERIODS,
@@ -355,6 +355,20 @@ async def filing_financials(
             next_steps=(
                 "Request only the needed statement and reduce periods or line items "
                 "when a smaller response is sufficient.",
+            ),
+        )
+    except FinancialsUnavailableError as exc:
+        return failure(
+            str(exc),
+            error_code=type(exc).__name__.upper(),
+            suggestions=(
+                "Structured extraction failed - the filing's own text is "
+                "still readable. Call filing_search with a query like "
+                "'total assets total liabilities total equity' (or "
+                "'revenue net income' for the income statement) to jump "
+                "straight to the relevant pages, or filing_markdown to "
+                "read the full converted text and extract the figures "
+                "directly.",
             ),
         )
     except (OpenFilingsError, ValueError) as exc:

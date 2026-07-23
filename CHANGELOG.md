@@ -24,6 +24,10 @@ All notable changes to OpenFilings are documented in this file.
   concepts recognized elsewhere. Falls back to the PDF annual report if no
   audited filing covers the exact fiscal year-end. Verified against
   Reliance Industries and Tata Consultancy Services.
+- The `filing_financials` MCP tool now points the calling agent to
+  `filing_search`/`filing_markdown` when structured extraction fails,
+  instead of just a bare error - the filing's own converted text is still
+  readable even when the heuristic statement parser can't make sense of it.
 
 ### Fixed
 
