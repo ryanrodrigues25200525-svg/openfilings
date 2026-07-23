@@ -690,6 +690,7 @@ class OpenFilingsService:
             return financials
 
         document = await self._download_document(filing)
+        used_cuif_only = False
         try:
             financials = await asyncio.to_thread(
                 extract_filing_financials,
@@ -707,8 +708,9 @@ class OpenFilingsService:
                 if cuif_balance_sheet is None:
                     raise
                 financials = self._sfc_cuif_only_financials(filing, cuif_balance_sheet)
+                used_cuif_only = True
 
-        if cuif_balance_sheet is not None:
+        if cuif_balance_sheet is not None and not used_cuif_only:
             # CUIF's balance-sheet accounts are supervisory stock figures and
             # reconcile exactly; a PDF-derived balance sheet is heuristic, so
             # CUIF replaces it here while the PDF still supplies every other
