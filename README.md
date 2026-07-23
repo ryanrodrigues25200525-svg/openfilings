@@ -22,7 +22,7 @@ source documents into Markdown for LLMs.
 - List and download CVM annual and interim financial statements without a key
 - Search current SGX Mainboard and Catalist companies while excluding non-stock products
 - List and download SGX annual reports without a key
-- Search BMV, NSE, Peruvian, and Colombian listed issuers
+- Search BMV, NSE, Peruvian, Colombian, and ASX-listed issuers
 - List and download their public annual or interim financial reports without a key
 - Search TSX and TSXV operating companies through the official TSX directory
 - Import a user-selected SEDAR+ generated URL or browser-downloaded Canadian PDF
@@ -48,11 +48,11 @@ source documents into Markdown for LLMs.
 - Enforce a logical cache limit and reclaim space with a cleanup command
 - Use the same operations from the CLI or an MCP server
 
-All filing-feed families are free. FCA, European ESEF, CVM, SGX, BMV, NSE, SMV,
-SFC, and TSX company discovery need no key. EDINET filing retrieval requires
-free API-key registration. SEDAR+ discovery remains browser-based, but a
-generated public document URL or locally downloaded PDF can be imported without
-an account, API key, or browser runtime.
+All filing-feed families are free. FCA, European ESEF, CVM, SGX, BMV, NSE,
+SMV, SFC, ASX, and TSX company discovery need no key. EDINET filing retrieval
+requires free API-key registration. SEDAR+ discovery remains browser-based,
+but a generated public document URL or locally downloaded PDF can be
+imported without an account, API key, or browser runtime.
 
 ## Setup
 
@@ -210,6 +210,23 @@ BMV annual PDFs and quarterly IFRS JSON archives both convert to Markdown and
 normalized financial statements. Peru reads SMV statement tables through
 bounded official statement operations with limited request concurrency.
 
+Australia has no free company-scoped filing API: ASIC's lodged financial
+reports are a paid-download product, and ASX itself exposes no keyless
+endpoint that filters its public announcements feed to one issuer. OpenFilings
+instead pages ASX's global announcements feed backward in time, keeping only
+the rows for the requested issuer code and the standardised Appendix forms
+that carry financial statements (Annual/Preliminary Final, Half Yearly/
+Appendix 4D, Quarterly Activities/Cashflow). Because the feed has no company
+filter, a heavily-covered large-cap can take several minutes and dozens of
+requests to page back to its last financial report; increase `max_pages` for
+deeper history at the cost of more requests:
+
+```bash
+uv run openfilings search "BHP" --source asx
+uv run openfilings filings au_asx_BHP --source asx
+uv run openfilings fetch au_asx_filing_03111504 -o asx-report.md
+```
+
 Canada supports official TSX/TSXV listed-company discovery plus explicit
 user-selected filing imports. Search and cache the issuer first. Then use the
 SEDAR+ document search's **Generate URL** action:
@@ -359,7 +376,9 @@ and SFC - fetching each one's latest filing's financials and verifying the
 fundamental balance-sheet identity (assets = liabilities + equity) holds,
 not just that a filing was found. Japan and Canada check company search
 only: EDINET's filing API requires a key, and SEDAR+ permits browser search
-but not stable automated filing retrieval.
+but not stable automated filing retrieval. ASX is excluded because a quiet
+reporting period can require paging back many announcement-list requests,
+which does not fit a bounded smoke-test timeout.
 
 Run the same local gates before a release:
 

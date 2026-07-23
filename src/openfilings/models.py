@@ -24,6 +24,7 @@ SourceName = Literal[
     "sedar",
     "smv",
     "sfc",
+    "asx",
 ]
 SourceSelection = Literal[
     "all",
@@ -37,6 +38,7 @@ SourceSelection = Literal[
     "sedar",
     "smv",
     "sfc",
+    "asx",
 ]
 SUPPORTED_SOURCE_NAMES = frozenset(
     {
@@ -49,6 +51,7 @@ SUPPORTED_SOURCE_NAMES = frozenset(
         "nse",
         "sedar",
         "smv",
+        "asx",
         "sfc",
     }
 )

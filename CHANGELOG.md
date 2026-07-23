@@ -40,6 +40,14 @@ All notable changes to OpenFilings are documented in this file.
   a schedule, instead of only when someone thinks to spot-check by hand.
   Coverage expanded to one issuer per ESEF jurisdiction (previously one
   for all of ESEF) plus company-search-only checks for Canada and Japan.
+- Added a keyless ASX listed-company and financial-report adapter for
+  Australia. ASX exposes no company-scoped filing API and ASIC's lodged
+  financial reports are a paid-download product, so discovery pages ASX's
+  public global announcements feed backward in time and keeps only the rows
+  for the requested issuer code, feeding the existing heuristic PDF-statement
+  extractor. Switzerland was investigated and not added: SIX's data APIs are
+  commercial, and ad hoc disclosures are pushed to each issuer's own website
+  with no central free index or predictable document host to build against.
 
 ### Fixed
 
