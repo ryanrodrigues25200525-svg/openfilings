@@ -9,7 +9,7 @@ from openfilings.smoke import SMOKE_CASES, run_live_smoke
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_keyless_smoke_matrix_covers_every_enabled_source_except_edinet() -> None:
+def test_keyless_smoke_matrix_covers_every_enabled_source() -> None:
     assert {case.source for case in SMOKE_CASES} == {
         "fca_nsm",
         "esef",
@@ -19,8 +19,17 @@ def test_keyless_smoke_matrix_covers_every_enabled_source_except_edinet() -> Non
         "nse",
         "smv",
         "sfc",
+        "sedar",
+        "edinet",
     }
     assert all(case.query and case.label for case in SMOKE_CASES)
+    # SEDAR+ and EDINET have no keyless filing-search API (SEDAR+ blocks
+    # automated queries; EDINET's filing API needs a paid-free key), so
+    # only company discovery is checked for them.
+    assert {case.source for case in SMOKE_CASES if not case.check_financials} == {
+        "sedar",
+        "edinet",
+    }
 
 
 @pytest.mark.asyncio
@@ -32,6 +41,7 @@ async def test_live_smoke_runner_checks_company_and_filing_resolution() -> None:
     assert len(results) == 2
     assert results[0].company_id == "company-fca_nsm"
     assert results[0].filing_id == "filing-fca_nsm"
+    assert results[0].identity_check == "not_applicable (no balance sheet extracted)"
     assert service.sources == ["fca_nsm", "esef"]
 
 
@@ -50,9 +60,18 @@ def test_ci_workflows_enforce_tests_security_and_keyless_live_checks() -> None:
     assert "EDINET_API_KEY" not in live
 
 
+class _FakeFinancials:
+    @staticmethod
+    def balance_sheet() -> None:
+        return None
+
+
 class _FakeFiling:
     def __init__(self, source: str) -> None:
         self.id = f"filing-{source}"
+
+    async def financials(self, **_: object) -> _FakeFinancials:
+        return _FakeFinancials()
 
 
 class _FakeFilings:
@@ -61,6 +80,9 @@ class _FakeFilings:
 
     def latest(self) -> _FakeFiling:
         return self._filing
+
+    def __getitem__(self, index: slice) -> list[_FakeFiling]:
+        return [self._filing][index]
 
 
 class _FakeCompany:

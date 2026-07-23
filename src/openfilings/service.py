@@ -321,11 +321,19 @@ class OpenFilingsService:
                 if selection == "fca_nsm":
                     raise ConfigurationError("The FCA NSM source is not configured.")
             elif nsm_identifier:
+                # FCA NSM has no generic "category" filter of its own, only
+                # disclosure type codes - without this, category="accounts"
+                # (the default) is silently a no-op and the latest filing
+                # can be any announcement type (a director dealing, an
+                # admission notice, ...), not a financial statement.
+                effective_type_codes = nsm_type_codes
+                if effective_type_codes is None and category == "accounts":
+                    effective_type_codes = ["ACS"]
                 calls.append(
                     self._nsm.list_filings(
                         nsm_identifier,
                         limit=limit,
-                        type_codes=nsm_type_codes,
+                        type_codes=effective_type_codes,
                     )
                 )
             elif selection == "fca_nsm":

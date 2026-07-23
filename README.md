@@ -354,10 +354,12 @@ Pull requests and main-branch changes run locked dependency installation, Ruff,
 the complete offline suite, Python 3.11–3.14 compatibility, wheel and source
 distribution builds, and installed-package smoke tests. CodeQL and a strict
 locked-dependency audit run separately. A scheduled keyless smoke job checks
-one listed issuer and current filing for FCA, ESEF, CVM, SGX, BMV, NSE, SMV,
-and SFC. Japan is excluded because its filing API requires a key; Canada is
-excluded because SEDAR+ permits browser search but not stable automated
-retrieval.
+one listed issuer per ESEF jurisdiction plus FCA, CVM, SGX, BMV, NSE, SMV,
+and SFC - fetching each one's latest filing's financials and verifying the
+fundamental balance-sheet identity (assets = liabilities + equity) holds,
+not just that a filing was found. Japan and Canada check company search
+only: EDINET's filing API requires a key, and SEDAR+ permits browser search
+but not stable automated filing retrieval.
 
 Run the same local gates before a release:
 

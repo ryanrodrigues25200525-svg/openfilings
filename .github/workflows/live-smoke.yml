@@ -16,7 +16,7 @@ jobs:
   smoke:
     name: Public regulator contracts
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v7
       - name: Install uv

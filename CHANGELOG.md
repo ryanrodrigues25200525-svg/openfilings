@@ -28,9 +28,22 @@ All notable changes to OpenFilings are documented in this file.
   `filing_search`/`filing_markdown` when structured extraction fails,
   instead of just a bare error - the filing's own converted text is still
   readable even when the heuristic statement parser can't make sense of it.
+- The scheduled live smoke suite now fetches each checked filing's
+  financials and verifies the balance-sheet identity holds, instead of
+  only checking that a filing was found - this is the check that would
+  have caught this session's Sweden and Singapore bugs automatically, on
+  a schedule, instead of only when someone thinks to spot-check by hand.
+  Coverage expanded to one issuer per ESEF jurisdiction (previously one
+  for all of ESEF) plus company-search-only checks for Canada and Japan.
 
 ### Fixed
 
+- FCA NSM has no generic "category" filter of its own, only disclosure type
+  codes, so `category="accounts"` (the default) was a silent no-op -
+  `filings()`/`get_filings()` could return the newest disclosure of any
+  type (a director dealing, an admission notice) instead of a financial
+  statement. Now maps to the "ACS" (accounts) type code automatically
+  unless the caller passes their own `nsm_type_codes`.
 - PDF-derived financials (aligned-text path): a page footer or a stray note
   reference carrying a real word alongside an embedded digit (e.g. a page
   number) is no longer stripped down to a false numeric value; the forward
