@@ -218,10 +218,13 @@ The service first selects the best structured route for the source document:
 
 1. Inline XBRL is streamed into normalized concepts, periods, units, decimals,
    and dimensions.
-2. BMV quarterly IFRS JSON is parsed directly.
-3. SMV statement tables are mapped from official bounded table operations.
-4. Supported PDFs use aligned table/text extraction.
-5. Image-only PDFs may use bounded OCR before statement parsing.
+2. CVM filings first try Brazil's Open Data DFP/ITR datasets - a
+   standardized chart of accounts published as bulk CSV/ZIP archives - before
+   falling back to the filing PDF.
+3. BMV quarterly IFRS JSON is parsed directly.
+4. SMV statement tables are mapped from official bounded table operations.
+5. Supported PDFs use aligned table/text extraction.
+6. Image-only PDFs may use bounded OCR before statement parsing.
 
 The result is a `FilingFinancials` object containing up to five standardized
 statement types: income statement, balance sheet, cash-flow statement,

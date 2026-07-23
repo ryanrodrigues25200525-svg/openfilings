@@ -227,8 +227,10 @@ The most important known constraints are:
 - an EDINET key is required to retrieve Japanese filing history and documents;
 - SEDAR+ filing discovery remains a manual browser step;
 - ESEF coverage can lag the underlying national regulator;
-- PDF statement extraction is heuristic and intentionally refuses low-confidence
-  normalization; and
+- PDF statement extraction (still the only path for India, Singapore, Peru,
+  and Colombia, and Mexico's PDF-only annual report) is heuristic and
+  intentionally refuses low-confidence normalization - Brazil is the
+  exception, reading CVM's Open Data DFP/ITR datasets directly instead; and
 - remote HTTP MCP hosting and authentication are outside the current scope.
 
 ## Repository guide

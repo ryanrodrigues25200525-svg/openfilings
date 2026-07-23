@@ -37,8 +37,11 @@ source documents into Markdown for LLMs.
 - Navigate extracted documents by heading and search within sections
 - Extract standardized income, balance-sheet, cash-flow, and comprehensive
   income statements from UK-GAAP, ESEF/IFRS, and EDINET Inline XBRL
-- Derive high-confidence normalized statements from aligned CVM and SGX PDF
-  tables while preserving labels, periods, currencies, and scale
+- Read Brazil's normalized statements directly from CVM's Open Data DFP/ITR
+  datasets - a standardized chart of accounts, not PDF parsing
+- Derive high-confidence normalized statements from aligned SGX PDF tables
+  (and CVM as a fallback when a filing isn't in the open dataset) while
+  preserving labels, periods, currencies, and scale
 - Score extraction quality with explainable warnings
 - Optionally route scanned PDFs through page-at-a-time Tesseract OCR
 - Reuse compressed Markdown and duplicate content through a SQLite cache
@@ -169,8 +172,10 @@ uv run openfilings financials fi_esef_23894 -o nokia-financials.json
 ```
 
 Brazil uses the official keyless CVM company register and IPE document archive.
-Only active `BOLSA` issuers are returned. CVM reports are PDFs; Markdown and
-high-confidence normalized statement rows are available without a key:
+Only active `BOLSA` issuers are returned. CVM reports are PDFs for Markdown and
+document reading, but `financials` reads structured statement rows directly
+from CVM's Open Data DFP/ITR datasets when the company and year are covered,
+falling back to PDF-derived tables otherwise - both need no key:
 
 ```bash
 uv run openfilings search "Banco do Brasil" --source cvm

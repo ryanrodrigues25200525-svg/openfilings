@@ -4,10 +4,42 @@ All notable changes to OpenFilings are documented in this file.
 
 ## Unreleased
 
+### Added
+
+- Brazil now reads CVM's Open Data DFP/ITR datasets directly for financial
+  statements - a standardized chart of accounts published as free bulk
+  CSV/ZIP archives - instead of parsing the PDF filing. Falls back to the
+  existing PDF-heuristic path when a company/year isn't in the dataset.
+
+### Fixed
+
+- PDF-derived financials: a labeled row followed by an unlabeled sub-item
+  breakdown (no repeated "Total X" line) no longer misattributes the first
+  segment's value as the row's own total.
+- PDF-derived financials: a combined subtotal label (e.g. "Passivo
+  circulante e não circulante") no longer overwrites its own component's
+  correct value.
+- PDF-derived financials: Indian lakh/crore number grouping (e.g.
+  "2,57,935") is now parsed correctly - previously failed silently on
+  every NSE filing using this convention.
+- PDF-derived financials: ratio-analysis disclosures, qualified variants
+  (e.g. "X Under Development"), and grand totals restating a different
+  total no longer falsely match unrelated line items.
+- PDF-derived financials: a single-word alias (e.g. "revenue", "goodwill")
+  no longer matches prose that merely starts with that word (e.g. "Revenue
+  Reserves", "Goodwill is reviewed on an annual basis...").
+- PDF-derived financials: a statement heading wrapped across separate
+  extracted lines is now detected via a joined window instead of missed.
+- Added missing common English aliases ("Net Revenue", "Income from
+  Operations", "Net Income", "Total Current/Non-Current Assets/
+  Liabilities") and a PDF ligature-extraction artifact ("Gross Proft" for
+  "Gross Profit").
+
 ### Removed
 
 - Removed Taiwan (TWSE/MOPS), Hong Kong (HKEX/HKEXnews), and mainland China
   (SSE/CNINFO) support.
+- Removed a dead, unreferenced `_is_nsm_company_id` helper.
 
 ### Documentation
 
