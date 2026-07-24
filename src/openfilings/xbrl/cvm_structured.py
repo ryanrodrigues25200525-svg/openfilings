@@ -98,6 +98,8 @@ _ACCOUNT_ALIASES: dict[str, tuple[str, ...]] = {
     "financing_cash_flow": ("caixa liquido atividades de financiamento",),
     "net_change_in_cash": ("aumento (reducao) de caixa e equivalentes",),
 }
+
+
 def _normalize_label(value: str) -> str:
     decomposed = unicodedata.normalize("NFKD", value.casefold())
     without_marks = "".join(
@@ -135,6 +137,7 @@ def extract_cvm_structured_financials(
         filing,
         "balance_sheet",
     )
+    balance_sheet_items = _with_derived_total_liabilities(balance_sheet_items)
     if balance_sheet_items:
         currency = _statement_currency(balance_sheet_items)
         statements.append(
@@ -181,6 +184,46 @@ def extract_cvm_structured_financials(
         taxonomy_namespaces=("cvm-plano-de-contas",),
         sha256=sha256,
     )
+
+
+def _with_derived_total_liabilities(
+    items: tuple[FinancialLineItem, ...],
+) -> tuple[FinancialLineItem, ...]:
+    """CVM's chart of accounts has no single "Passivo Total" line - only
+    Passivo Circulante and Passivo Não Circulante, which combine directly
+    with equity for the balance-sheet total. Derive total_liabilities from
+    those two so it reconciles the same way every other market's does."""
+
+    if any(item.code == "total_liabilities" for item in items):
+        return items
+    current = next((item for item in items if item.code == "current_liabilities"), None)
+    noncurrent = next(
+        (item for item in items if item.code == "noncurrent_liabilities"), None
+    )
+    if current is None or noncurrent is None:
+        return items
+    noncurrent_by_period = {value.period.label: value for value in noncurrent.values}
+    values = tuple(
+        FinancialValue(
+            period=current_value.period,
+            value=current_value.value + matching.value,
+            unit=current_value.unit,
+            decimals=current_value.decimals,
+        )
+        for current_value in current.values
+        if (matching := noncurrent_by_period.get(current_value.period.label))
+        is not None
+    )
+    if not values:
+        return items
+    definition = _DEFINITIONS["total_liabilities"]
+    derived = FinancialLineItem(
+        code="total_liabilities",
+        name=definition.name,
+        concept="cvm-plano-de-contas:total_liabilities (derived)",
+        values=values,
+    )
+    return (*items, derived)
 
 
 def _statement_line_items(

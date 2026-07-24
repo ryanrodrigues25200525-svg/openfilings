@@ -116,6 +116,24 @@ All notable changes to OpenFilings are documented in this file.
 
 ### Fixed
 
+- Found via a live end-to-end test pass across every supported market:
+  CVM's balance sheet was missing `total_liabilities` (only
+  `current_liabilities`/`noncurrent_liabilities` were present) - CVM's
+  chart of accounts has no single "Passivo Total" line at all, so it's now
+  derived as the sum of the two when not directly tagged, the same way
+  every other market's balance sheet reconciles.
+- PDF-derived financials (aligned-text path): a label repeating verbatim
+  within one statement's page/continuation window (e.g. a cash-flow
+  "changes in working capital" reconciliation note reusing a balance-sheet
+  row's exact wording, such as "Trade and other receivables") no longer
+  overwrites the real row with the note's period-on-period movement
+  figure - found via a live ASX filing where this silently turned a
+  positive receivables balance negative even though the top-line
+  balance-sheet identity still happened to hold. Only applies to an exact
+  repeated label; a different, more general label that resolves to the
+  same concept (e.g. a segment's "Operating revenue" followed by the
+  statement's real "net revenue" total) still prefers the later, more
+  complete occurrence as before.
 - FCA NSM has no generic "category" filter of its own, only disclosure type
   codes, so `category="accounts"` (the default) was a silent no-op -
   `filings()`/`get_filings()` could return the newest disclosure of any

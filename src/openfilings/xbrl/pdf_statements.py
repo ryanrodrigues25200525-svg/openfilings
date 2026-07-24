@@ -25,9 +25,7 @@ _YEAR_PATTERN = re.compile(r"\b(20\d{2})\b")
 _DIVIDER_CELL_PATTERN = re.compile(r"^:?-{2,}:?$")
 _FOOTNOTE_PATTERN = re.compile(r"(?:\s|\*)+(?:note\s*)?\d+[a-z]?$", re.IGNORECASE)
 _WORD_PATTERN = re.compile(r"[^\W\d_]{2,}", re.UNICODE)
-_PLACEHOLDER_CELL_VALUES = frozenset(
-    {"-", "\N{EM DASH}", "\N{EN DASH}", "n/a", "nm"}
-)
+_PLACEHOLDER_CELL_VALUES = frozenset({"-", "\N{EM DASH}", "\N{EN DASH}", "n/a", "nm"})
 # A row's own values sit within a short, contiguous run of lines after its
 # label. A run of prose this long (footnotes, a page footer) means the scan
 # has left the statement - a number found beyond it is not this row's value.
@@ -636,14 +634,26 @@ def _line_items_from_text(
             decimals=decimals,
         )
         previous = items.get(definition.code)
-        if previous is not None and _all_zero(values) and not _all_zero(
-            previous.values
+        concept = f"pdf-label:{_concept_label(label)}"
+        # The exact same label text repeating within one statement page/
+        # continuation window is a note reusing the primary statement's
+        # own wording (e.g. a "changes in working capital" cash-flow
+        # reconciliation reusing "Trade and other receivables" verbatim)
+        # - not a different, more specific label that happens to resolve
+        # to the same concept (where the later, more general total is
+        # usually the real one). Keep the first occurrence unless the
+        # later one is demonstrably more complete (more periods).
+        if (
+            previous is not None
+            and previous.concept == concept
+            and not _all_zero(previous.values)
+            and (_all_zero(values) or len(values) <= len(previous.values))
         ):
             continue
         items[definition.code] = FinancialLineItem(
             code=definition.code,
             name=definition.name,
-            concept=f"pdf-label:{_concept_label(label)}",
+            concept=concept,
             values=values,
         )
     return tuple(items.values())
@@ -707,8 +717,10 @@ def _line_items_from_table(
         if not values:
             continue
         previous = items.get(definition.code)
-        if previous is not None and _all_zero(values) and not _all_zero(
-            previous.values
+        if (
+            previous is not None
+            and _all_zero(values)
+            and not _all_zero(previous.values)
         ):
             # IFRS balance sheets often repeat a label across both a
             # current and a non-current breakdown (e.g. "Cuentas por
@@ -928,9 +940,7 @@ def _breakdown_aligned_numbers(
     if not runs:
         return ()
     candidate = runs[-1]
-    if len(candidate) > period_count and _looks_like_note(
-        candidate[0], candidate[1:]
-    ):
+    if len(candidate) > period_count and _looks_like_note(candidate[0], candidate[1:]):
         candidate = candidate[1:]
     if len(candidate) > period_count:
         split = _footnote_split(candidate, period_count)

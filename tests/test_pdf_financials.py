@@ -220,9 +220,9 @@ def test_aligned_pdf_text_finds_total_behind_unlabeled_segment_breakdown() -> No
 
     income = financials.income_statement()
     assert income is not None
-    assert next(
-        item for item in income.line_items if item.code == "revenue"
-    ).values[0].value == Decimal("660257000000")
+    assert next(item for item in income.line_items if item.code == "revenue").values[
+        0
+    ].value == Decimal("660257000000")
     assert next(
         item for item in income.line_items if item.code == "cost_of_revenue"
     ).values[0].value == Decimal("-311011000000")
@@ -311,7 +311,7 @@ def test_definition_for_label_rejects_ifrs5_disposal_group_disclosures() -> None
 
 
 def test_definition_for_label_rejects_total_pasivos_y_patrimonio() -> None:
-    """"Total Pasivos y Patrimonio" restates total assets (liabilities plus
+    """ "Total Pasivos y Patrimonio" restates total assets (liabilities plus
     equity), not the "Total Pasivos" (total_liabilities) line item alone."""
     from openfilings.xbrl.pdf_statements import _definition_for_label
 
@@ -396,6 +396,27 @@ def test_aligned_pdf_text_prefers_larger_total_when_periods_tie() -> None:
     assert next(
         item for item in balance.line_items if item.code == "total_assets"
     ).values[0].value == Decimal("897488000000")
+
+
+def test_aligned_pdf_text_keeps_first_occurrence_of_a_repeated_label() -> None:
+    """A cash-flow reconciliation note ("changes in working capital") can
+    reuse a balance-sheet row's exact label ("Trade and other receivables")
+    within the same statement page/continuation window. The note's number
+    is a period-on-period movement, not the balance-sheet figure, and must
+    not overwrite the real row that already appeared earlier in the same
+    section."""
+    financials = extract_pdf_text_financials(
+        (_balance_sheet_with_reused_label_text(),),
+        _filing(period_end=date(2025, 6, 30), source="asx", filing_type="half_year"),
+        source_url="https://example.test/asx-report.pdf",
+        sha256="j" * 64,
+    )
+
+    balance = financials.balance_sheet()
+    assert balance is not None
+    assert next(
+        item for item in balance.line_items if item.code == "trade_receivables"
+    ).values[0].value == Decimal("5452000000")
 
 
 def test_single_word_alias_requires_glued_continuation() -> None:
@@ -849,6 +870,31 @@ def _consolidated_balance_sheet_text() -> str:
     Total assets
     897,488
     827,219
+    """
+
+
+def _balance_sheet_with_reused_label_text() -> str:
+    return """
+    Consolidated Balance Sheet
+    as at 30 June 2025
+    In $ millions
+    2025
+    Trade and other receivables
+    5,452
+    Inventories
+    5,817
+    Total assets
+    116,012
+    Total liabilities
+    60,547
+    Total equity
+    55,465
+    Note 12: Reconciliation of profit to net cash flow
+    Changes in working capital
+    Trade and other receivables
+    (1,331)
+    Inventories
+    (672)
     """
 
 
