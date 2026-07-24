@@ -47,15 +47,21 @@ from openfilings.models import (
     CachePruneResult,
     CacheStats,
     Company,
+    CompanyFacts,
     ExtractionQuality,
     Filing,
     FilingContent,
     FilingFinancials,
+    FinancialLineItem,
     FinancialStatement,
+    FinancialValue,
+    MajorHolderNotification,
     OcrMode,
     ReportingPeriod,
     SourceSelection,
+    StatementType,
 )
+from openfilings.ownership import extract_nsm_major_holder
 from openfilings.resources import (
     CompanyResource,
     CompanyResources,
@@ -82,6 +88,13 @@ _NSM_CATEGORY_TYPE_CODES: dict[str, list[str]] = {
     "accounts": ["ACS"],
     "insider": ["DSH"],
     "major_holdings": ["HOL"],
+}
+_FACTS_STATEMENT_TITLES: dict[StatementType, str] = {
+    "income_statement": "Income statement",
+    "balance_sheet": "Balance sheet",
+    "cash_flow_statement": "Cash flow statement",
+    "comprehensive_income": "Statement of comprehensive income",
+    "changes_in_equity": "Statement of changes in equity",
 }
 
 
@@ -299,6 +312,54 @@ class OpenFilingsService:
         )[:limit]
         self._cache.put_companies(companies)
         return companies
+
+    async def search_disclosures(
+        self,
+        keyword: str,
+        *,
+        limit: int = 25,
+        source: SourceSelection = "all",
+    ) -> list[Filing]:
+        """Full-text search across every issuer's disclosures for one
+        source, not scoped to a single company. Only sources whose feed
+        supports keyword matching participate - currently FCA NSM (headline
+        search) and CVM (the yearly IPE archive covers every issuer
+        already, so this filters it by subject/type instead of a new
+        endpoint)."""
+
+        selection = self._validate_source(source)
+        calls: list[Coroutine[Any, Any, list[Filing]]] = []
+        if selection in {"all", "fca_nsm"}:
+            if self._nsm is None:
+                if selection == "fca_nsm":
+                    raise ConfigurationError("The FCA NSM source is not configured.")
+            else:
+                calls.append(self._nsm.search_disclosures(keyword, limit=limit))
+        if selection in {"all", "cvm"}:
+            if self._cvm is None:
+                if selection == "cvm":
+                    raise ConfigurationError("The CVM source is not configured.")
+            else:
+                calls.append(self._cvm.search_disclosures(keyword, limit=limit))
+
+        if selection not in {"all", "fca_nsm", "cvm"}:
+            raise ConfigurationError(
+                f"Full-text disclosure search is not supported for {selection}; "
+                "only fca_nsm and cvm currently support it."
+            )
+
+        results = await self._gather_available(calls)
+        filings = self._deduplicate_filings(
+            [filing for result in results for filing in result]
+        )
+        filings.sort(
+            key=lambda filing: (
+                filing.published_at or self._date_sort_value(filing),
+                filing.id,
+            ),
+            reverse=True,
+        )
+        return filings[:limit]
 
     async def company(
         self,
@@ -810,6 +871,162 @@ class OpenFilingsService:
         self._cache.put_financials(financials)
         self._enforce_cache_limit()
         return financials
+
+    async def get_company_facts(
+        self,
+        company_id: str,
+        *,
+        source: SourceSelection = "all",
+        periods: int = 8,
+        category: str | None = "accounts",
+    ) -> CompanyFacts:
+        """Merge a company's most recent structured filings into one
+        multi-period time series per line item - EdgarTools' ``get_facts()``
+        concept. Works for every market that already has structured or
+        PDF-derived financials; no adapter changes needed. Later filings are
+        fetched first (list_filings already sorts newest-first), so when two
+        filings report the same period, the newer filing's value wins."""
+
+        filings = await self.list_filings(
+            company_id, category=category, limit=max(periods, 1), source=source
+        )
+        names: dict[tuple[StatementType, str], tuple[str, str]] = {}
+        values: dict[tuple[StatementType, str], dict[str, FinancialValue]] = {}
+        currencies: dict[StatementType, str | None] = {}
+        filing_ids: list[str] = []
+        for filing in filings[:periods]:
+            try:
+                financials = await self.get_filing_financials(filing.id)
+            except (
+                FinancialsUnavailableError,
+                DocumentUnavailableError,
+                ExtractionError,
+                SourceError,
+            ):
+                continue
+            filing_ids.append(filing.id)
+            for statement in financials.statements:
+                currencies.setdefault(statement.statement_type, statement.currency)
+                for item in statement.line_items:
+                    key = (statement.statement_type, item.code)
+                    names.setdefault(key, (item.name, item.concept))
+                    bucket = values.setdefault(key, {})
+                    for value in item.values:
+                        bucket.setdefault(value.period.label, value)
+
+        statement_types = {statement_type for statement_type, _ in names}
+        statements = tuple(
+            FinancialStatement(
+                statement_type=statement_type,
+                title=_FACTS_STATEMENT_TITLES[statement_type],
+                currency=currencies.get(statement_type),
+                line_items=tuple(
+                    FinancialLineItem(
+                        code=code,
+                        name=name,
+                        concept=concept,
+                        values=tuple(
+                            sorted(
+                                values[(candidate_type, code)].values(),
+                                key=lambda value: value.period.end_date,
+                            )
+                        ),
+                    )
+                    for (candidate_type, code), (name, concept) in names.items()
+                    if candidate_type == statement_type
+                ),
+            )
+            for statement_type in statement_types
+        )
+        if not statements:
+            raise FinancialsUnavailableError(
+                f"No structured financials found across the {len(filings)} most "
+                f"recent filings for {company_id}."
+            )
+        return CompanyFacts(
+            company_id=company_id,
+            statements=statements,
+            filing_ids=tuple(filing_ids),
+        )
+
+    async def get_major_holder(self, filing_id: str) -> MajorHolderNotification:
+        """Parse one UK TR-1 major-shareholding filing into structured
+        fields (holder name, position, dates) instead of a bare filing
+        pointer. Only FCA NSM's ``category="major_holdings"`` filings are
+        supported - other sources return their major-holdings disclosures
+        as plain ``Filing`` objects today."""
+
+        filing = self._cache.get_filing(filing_id)
+        if filing is None:
+            filing = await self._resolve_filing(filing_id)
+        if filing.source != "fca_nsm" or filing.filing_type != "HOL":
+            raise ExtractionError(
+                "Structured major-holder extraction is only available for "
+                'FCA NSM category="major_holdings" filings.'
+            )
+        document = await self._download_document(filing)
+        html = document.data.decode("utf-8", errors="replace")
+        holder = extract_nsm_major_holder(html, filing)
+        if holder is None:
+            raise ExtractionError(
+                f"Could not parse a TR-1 major-holder notification from {filing_id}."
+            )
+        return holder
+
+    async def list_major_holders(
+        self, company_id: str, *, limit: int = 25
+    ) -> list[MajorHolderNotification]:
+        """List and parse a UK issuer's major-shareholding filings - who
+        holds >5% of this company, per TR-1 notification."""
+
+        filings = await self.list_filings(
+            company_id, category="major_holdings", limit=limit, source="fca_nsm"
+        )
+        holders: list[MajorHolderNotification] = []
+        for filing in filings:
+            try:
+                holders.append(await self.get_major_holder(filing.id))
+            except (ExtractionError, DocumentUnavailableError, SourceError):
+                continue
+        return holders
+
+    async def search_major_holders(
+        self,
+        holder_name: str,
+        *,
+        scan_limit: int = 200,
+        limit: int = 25,
+    ) -> list[MajorHolderNotification]:
+        """A bounded, 13F-style reverse lookup: what has this holder
+        disclosed a >5% position in, across UK issuers? NSM's search index
+        doesn't carry the holder's identity (it's only in each filing's
+        document body), so this scans the ``scan_limit`` most recent TR-1
+        filings across every issuer and parses each one - not the full
+        historical record, and the cost scales with ``scan_limit``."""
+
+        if self._nsm is None:
+            raise ConfigurationError("The FCA NSM source is not configured.")
+        clean_name = self._normalize_holder_name(holder_name)
+        if not clean_name:
+            return []
+        filings = await self._nsm.search_disclosures(
+            None, type_codes=["HOL"], limit=scan_limit
+        )
+        matches: list[MajorHolderNotification] = []
+        for filing in filings:
+            try:
+                holder = await self.get_major_holder(filing.id)
+            except (ExtractionError, DocumentUnavailableError, SourceError):
+                continue
+            if clean_name in self._normalize_holder_name(holder.holder_name):
+                matches.append(holder)
+                if len(matches) >= limit:
+                    break
+        return matches
+
+    @staticmethod
+    def _normalize_holder_name(value: str) -> str:
+        return " ".join(value.casefold().split())
 
     async def _extract_sfc_cuif_balance_sheet(
         self, filing: Filing

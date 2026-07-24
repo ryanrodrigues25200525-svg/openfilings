@@ -15,10 +15,12 @@ from openfilings.mcp_support import (
     MAX_OUTLINE_SECTIONS,
     MAX_SEARCH_RESULTS,
     MAX_SNIPPET_CHARS,
+    company_facts_view,
     company_summary,
     failure,
     filing_summary,
     financials_view,
+    major_holder_summary,
     query_excerpt,
     section_summary,
     success,
@@ -98,6 +100,128 @@ async def filings_list(
             next_steps=(
                 "Use filing_outline with a filing id before requesting content.",
                 "Use filing_financials when structured statements answer the question.",
+            ),
+        )
+    except (OpenFilingsError, ValueError) as exc:
+        return _request_failure(exc)
+
+
+@mcp.tool()
+async def disclosures_search(
+    keyword: str,
+    limit: int = 10,
+    source: str = "all",
+) -> dict[str, Any]:
+    """Full-text search across every issuer's disclosures, not scoped to
+    one company. Only fca_nsm (headline search) and cvm (its yearly filing
+    index) support this."""
+
+    try:
+        validate_limit(limit, maximum=MAX_METADATA_RESULTS)
+        async with OpenFilingsService.from_settings() as service:
+            filings = await service.search_disclosures(
+                keyword,
+                limit=limit,
+                source=source,
+            )
+        return success(
+            {
+                "filings": [filing_summary(filing) for filing in filings],
+                "count": len(filings),
+            },
+            next_steps=(
+                "Use filing_outline or filing_markdown with a filing id for content.",
+            ),
+        )
+    except (OpenFilingsError, ValueError) as exc:
+        return _request_failure(exc)
+
+
+@mcp.tool()
+async def company_facts(
+    company_id: str,
+    periods: int = 8,
+    source: str = "all",
+    statements: list[StatementType] | None = None,
+    detail: Literal["minimal", "standard", "full"] = "standard",
+    max_line_items: int = 40,
+) -> dict[str, Any]:
+    """Merge a company's most recent structured filings into one multi-
+    period fact series per line item, instead of one filing at a time."""
+
+    try:
+        async with OpenFilingsService.from_settings() as service:
+            facts = await service.get_company_facts(
+                company_id,
+                periods=periods,
+                source=source,
+            )
+        return success(
+            company_facts_view(
+                facts,
+                statements=statements,
+                periods=periods,
+                detail=detail,
+                max_line_items=max_line_items,
+            ),
+            next_steps=(
+                "Reduce periods or line items when a smaller response is sufficient.",
+            ),
+        )
+    except FinancialsUnavailableError as exc:
+        return failure(str(exc), error_code=type(exc).__name__.upper())
+    except (OpenFilingsError, ValueError) as exc:
+        return _request_failure(exc)
+
+
+@mcp.tool()
+async def major_holders_list(
+    company_id: str,
+    limit: int = 25,
+) -> dict[str, Any]:
+    """List a UK issuer's TR-1 major-shareholding notifications, parsed
+    into structured fields (holder name, position, dates)."""
+
+    try:
+        validate_limit(limit, maximum=MAX_METADATA_RESULTS)
+        async with OpenFilingsService.from_settings() as service:
+            holders = await service.list_major_holders(company_id, limit=limit)
+        return success(
+            {
+                "holders": [major_holder_summary(holder) for holder in holders],
+                "count": len(holders),
+            }
+        )
+    except (OpenFilingsError, ValueError) as exc:
+        return _request_failure(exc)
+
+
+@mcp.tool()
+async def major_holders_search(
+    holder_name: str,
+    scan_limit: int = 200,
+    limit: int = 25,
+) -> dict[str, Any]:
+    """Bounded 13F-style reverse lookup: what has this holder disclosed a
+    >5% position in, across UK issuers? Scans the scan_limit most recent
+    TR-1 filings - not the full historical record."""
+
+    try:
+        validate_limit(limit, maximum=MAX_METADATA_RESULTS)
+        async with OpenFilingsService.from_settings() as service:
+            holders = await service.search_major_holders(
+                holder_name,
+                scan_limit=scan_limit,
+                limit=limit,
+            )
+        return success(
+            {
+                "holders": [major_holder_summary(holder) for holder in holders],
+                "count": len(holders),
+                "scan_limit": scan_limit,
+            },
+            next_steps=(
+                "Increase scan_limit to search further back if nothing was found.",
             ),
         )
     except (OpenFilingsError, ValueError) as exc:

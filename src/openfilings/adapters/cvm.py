@@ -144,6 +144,47 @@ class CvmClient:
             reverse=True,
         )[: max(1, limit)]
 
+    async def search_disclosures(
+        self,
+        keyword: str,
+        *,
+        limit: int = 25,
+        years: int = 1,
+    ) -> list[Filing]:
+        """Full-text search across every issuer's disclosures for the most
+        recent year(s), not scoped to one company. The yearly IPE archive
+        already covers every issuer in one file, so this reuses it directly
+        instead of a new endpoint - it just skips the per-company filter and
+        matches the keyword against the subject/type/category fields."""
+
+        clean_keyword = self._normalize_search(keyword)
+        if not clean_keyword:
+            return []
+        current_year = self._today().year
+        filings: dict[str, Filing] = {}
+        for year in range(current_year, current_year - max(1, years), -1):
+            for row in await self._ipe_rows(year):
+                haystack = self._normalize_search(
+                    " ".join(
+                        row.get(field, "") for field in ("Assunto", "Tipo", "Categoria")
+                    )
+                )
+                if clean_keyword not in haystack:
+                    continue
+                filing = self._filing_from_row(row, category=None)
+                if filing is not None:
+                    filings[filing.id] = filing
+            if len(filings) >= max(1, limit):
+                break
+        return sorted(
+            filings.values(),
+            key=lambda item: (
+                item.published_at or self._date_time(item.filing_date),
+                item.id,
+            ),
+            reverse=True,
+        )[: max(1, limit)]
+
     async def download_document(self, document_url: str) -> SourceDocument:
         source_url = self.document_url(document_url)
         response = await self._request("GET", source_url)

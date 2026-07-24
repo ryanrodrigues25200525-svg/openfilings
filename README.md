@@ -39,6 +39,13 @@ source documents into Markdown for LLMs.
 - List director/PDMR dealing notifications (`category="insider"`) and major-
   shareholding notifications (`category="major_holdings"`) for UK FCA NSM,
   India NSE, and Brazil CVM, alongside financial-statement filings
+- Full-text search across every issuer's disclosures, not scoped to one
+  company, for UK FCA NSM and Brazil CVM
+- Merge a company's recent filings into one multi-period fact series per
+  line item, across any market with structured or PDF-derived financials
+- Parse UK TR-1 major-shareholding notifications into structured fields
+  (holder name, position, dates) and run a bounded reverse lookup - what
+  has a given holder disclosed a stake in, across UK issuers
 - Resolve listed-company names to legal entity identifiers (LEIs)
 - List regulated disclosures in one timeline
 - Download public PDF, HTML/XHTML, and tagged-report ZIP documents
@@ -367,6 +374,10 @@ dimensions. The lower-level `OpenFilingsService`, normalized models, and raw
 
 - `companies_search(query, limit=5, source="all")`
 - `filings_list(company_id, category="accounts", limit=10, source="all", history_days=120)`
+- `disclosures_search(keyword, limit=10, source="all")`
+- `company_facts(company_id, periods=8, source="all", statements=None, detail="standard", max_line_items=40)`
+- `major_holders_list(company_id, limit=25)`
+- `major_holders_search(holder_name, scan_limit=200, limit=25)`
 - `sedar_filing_import(company_id, document_url, title, filing_date, period_end=None, filing_type="annual", category="accounts")`
 - `filing_outline(filing_id, limit=100, refresh=False)`
 - `filing_read(filing_id, section, offset=0, max_chars=6000, refresh=False)`
@@ -521,6 +532,32 @@ reads its own yearly VLMO Open Data archive (CVM Instrução 358 art. 11) -
 the same row shape as the IPE archive, just a different yearly ZIP - which
 combines insider trading and holdings into one filing, so both are covered
 by `category="insider"` alone.
+
+`search_disclosures()` runs a full-text keyword search across every
+issuer's disclosures for one source, not scoped to a single company. NSM's
+own top-level `keyword` field on its search API is a no-op (confirmed
+live: it doesn't change result counts at all); this uses a `headline`
+criterion instead, which does filter. CVM's yearly IPE archive already
+covers every issuer in one file, so this filters it by subject/type
+instead of a new endpoint.
+
+`get_company_facts()` merges a company's most recent structured filings
+into one multi-period time series per line item - closer to EdgarTools'
+`get_facts()` than a single filing's statements. It's pure composition
+over `list_filings()`/`get_filing_financials()`, so it works for any
+market with structured or PDF-derived financials already, with no adapter
+changes.
+
+UK TR-1 major-shareholding filings (`category="major_holdings"` on FCA
+NSM) are pre-rendered HTML, not a structured feed, but FCA prescribes a
+fixed section order for the form. `list_major_holders()` parses that
+sequence into structured fields (holder name, ISIN, position, dates) -
+returning `None` rather than a wrong answer when the expected labels
+aren't found. `search_major_holders()` is a bounded, 13F-style reverse
+lookup: since NSM's search index doesn't carry the holder's identity (only
+each filing's document body does), it scans the `scan_limit` most recent
+TR-1 filings across every issuer and parses each one - not the full
+historical record, and the cost scales with `scan_limit`.
 
 The Singapore connector uses SGX's official keyless
 [corporate-information page](https://www.sgx.com/securities/corporate-information),

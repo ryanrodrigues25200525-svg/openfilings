@@ -117,6 +117,33 @@ class FcaNsmClient:
             self._filing_from_hit(hit, company_id=company_id) for hit in hits[:limit]
         ]
 
+    async def search_disclosures(
+        self,
+        keyword: str | None,
+        *,
+        type_codes: list[str] | None = None,
+        limit: int = 25,
+    ) -> list[Filing]:
+        """Full-text search across every issuer's disclosures, not scoped to
+        one company. Matches against the disclosure headline - the NSM
+        search API's own top-level "keyword" field is a no-op (confirmed
+        live: it doesn't change result counts at all), so this uses a
+        "headline" criterion instead, which does filter. Pass keyword=None
+        to browse every disclosure of the given type_codes instead."""
+
+        clean_keyword = keyword.strip() if keyword else ""
+        if keyword is not None and not clean_keyword:
+            return []
+        criteria: list[dict[str, Any]] = [{"name": "latest_flag", "value": "Y"}]
+        if clean_keyword:
+            criteria.append({"name": "headline", "value": clean_keyword})
+        if type_codes:
+            criteria.append(
+                {"name": "type_code", "value": [code.lower() for code in type_codes]}
+            )
+        hits = await self._search(criteria=criteria, size=min(max(limit, 1), 1000))
+        return [self._filing_from_hit(hit) for hit in hits[:limit]]
+
     async def get_filing(self, disclosure_id: str) -> Filing:
         clean_id = disclosure_id.strip()
         hits = await self._search(

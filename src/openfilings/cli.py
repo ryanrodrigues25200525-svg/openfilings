@@ -228,6 +228,117 @@ def financials(
     _run(run())
 
 
+@app.command("search-disclosures")
+def search_disclosures(
+    keyword: Annotated[str, typer.Argument(help="Full-text keyword to search for.")],
+    limit: Annotated[int, typer.Option(min=1, max=200)] = 25,
+    source: Annotated[
+        SourceOption,
+        typer.Option(help="Only fca_nsm and cvm support full-text search."),
+    ] = SourceOption.all,
+) -> None:
+    """Full-text search across every issuer's disclosures (fca_nsm, cvm)."""
+
+    async def run() -> None:
+        async with OpenFilingsService.from_settings() as service:
+            results = await service.search_disclosures(
+                keyword, limit=limit, source=source.value
+            )
+        if not results:
+            typer.echo("No disclosures found.")
+            return
+        for filing in results:
+            typer.echo(
+                f"{filing.id}\t{filing.filing_date.isoformat()}\t"
+                f"{filing.source}\t{filing.issuer_name}\t{filing.title}"
+            )
+
+    _run(run())
+
+
+@app.command()
+def facts(
+    company_id: Annotated[str, typer.Argument(help="OpenFilings company ID.")],
+    periods: Annotated[int, typer.Option(min=1, max=40)] = 8,
+    source: Annotated[SourceOption, typer.Option()] = SourceOption.all,
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", "-o", help="Write structured JSON to this file."),
+    ] = None,
+) -> None:
+    """Merge a company's recent filings into one multi-period fact series."""
+
+    async def run() -> None:
+        async with OpenFilingsService.from_settings() as service:
+            result = await service.get_company_facts(
+                company_id, periods=periods, source=source.value
+            )
+        rendered = json.dumps(result.model_dump(mode="json"), indent=2)
+        if output is None:
+            typer.echo(rendered)
+            return
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(rendered + "\n", encoding="utf-8")
+        typer.echo(f"Wrote {output} ({len(result.filing_ids)} filing(s) merged).")
+
+    _run(run())
+
+
+@app.command("major-holders")
+def major_holders(
+    company_id: Annotated[str, typer.Argument(help="OpenFilings company ID.")],
+    limit: Annotated[int, typer.Option(min=1, max=100)] = 25,
+) -> None:
+    """List a UK issuer's TR-1 major-shareholding notifications."""
+
+    async def run() -> None:
+        async with OpenFilingsService.from_settings() as service:
+            holders = await service.list_major_holders(company_id, limit=limit)
+        if not holders:
+            typer.echo("No major-holder notifications found.")
+            return
+        for holder in holders:
+            typer.echo(
+                f"{holder.holder_name}\t{holder.total_percent}\t"
+                f"{holder.date_crossed}\t{holder.filing_id}"
+            )
+
+    _run(run())
+
+
+@app.command("search-major-holders")
+def search_major_holders(
+    holder_name: Annotated[str, typer.Argument(help="Holder name to search for.")],
+    scan_limit: Annotated[
+        int,
+        typer.Option(
+            min=1,
+            max=1000,
+            help="How many recent UK TR-1 filings to scan (not the full history).",
+        ),
+    ] = 200,
+    limit: Annotated[int, typer.Option(min=1, max=100)] = 25,
+) -> None:
+    """Bounded 13F-style reverse lookup: what has this holder disclosed a
+    >5% position in, across UK issuers?"""
+
+    async def run() -> None:
+        async with OpenFilingsService.from_settings() as service:
+            matches = await service.search_major_holders(
+                holder_name, scan_limit=scan_limit, limit=limit
+            )
+        if not matches:
+            typer.echo("No matching major-holder notifications found.")
+            return
+        for holder in matches:
+            typer.echo(
+                f"{holder.issuer_name}\t{holder.total_percent}\t"
+                f"{holder.date_crossed}\t{holder.filing_id}"
+            )
+
+    _run(run())
+
+
 @app.command("import-sedar")
 def import_sedar(
     company_id: Annotated[

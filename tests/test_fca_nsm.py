@@ -66,6 +66,61 @@ async def test_download_returns_media_type_and_provenance() -> None:
     assert document.source_url.endswith("/NSM/RNS/disclosure-123.html")
 
 
+@pytest.mark.asyncio
+async def test_search_disclosures_uses_headline_criterion_not_top_level_keyword() -> (
+    None
+):
+    request_payloads: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        request_payloads.append(payload)
+        return httpx.Response(200, json=_search_response())
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        source = FcaNsmClient(client=http_client)
+        filings = await source.search_disclosures("Tesco", type_codes=["HOL"], limit=5)
+
+    assert filings
+    payload = request_payloads[0]
+    assert payload["keyword"] is None
+    criteria = cast(list[dict[str, Any]], payload["criteriaObj"]["criteria"])
+    assert {"name": "headline", "value": "Tesco"} in criteria
+    assert {"name": "type_code", "value": ["hol"]} in criteria
+
+
+@pytest.mark.asyncio
+async def test_search_disclosures_without_keyword_browses_by_type_code() -> None:
+    request_payloads: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        request_payloads.append(json.loads(request.content))
+        return httpx.Response(200, json=_search_response())
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        source = FcaNsmClient(client=http_client)
+        filings = await source.search_disclosures(None, type_codes=["HOL"], limit=5)
+
+    assert filings
+    criteria = cast(
+        list[dict[str, Any]], request_payloads[0]["criteriaObj"]["criteria"]
+    )
+    assert not any(item["name"] == "headline" for item in criteria)
+
+
+@pytest.mark.asyncio
+async def test_search_disclosures_empty_keyword_short_circuits() -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _: (_ for _ in ()).throw(AssertionError("should not request"))
+        )
+    ) as http_client:
+        source = FcaNsmClient(client=http_client)
+        filings = await source.search_disclosures("   ")
+
+    assert filings == []
+
+
 def test_document_url_rejects_paths_outside_nsm_artefacts() -> None:
     with pytest.raises(DocumentUnavailableError, match="Unsafe"):
         FcaNsmClient.document_url("https://example.test/document.pdf")

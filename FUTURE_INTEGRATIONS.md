@@ -61,7 +61,9 @@ blanket "add everything everywhere" plan.
 | EdgarTools feature | SEC data it reads | Non-US equivalent concept | Status |
 |---|---|---|---|
 | Insider transactions | Forms 3/4/5 | Director/PDMR dealing notifications (EU MAR Art. 19, UK PDMR rules, India SEBI PIT) | **Shipped**: UK FCA NSM (`category="insider"` → NSM type code `DSH`), India NSE (`category="insider"` → SEBI PIT Regulation 7(2) disclosures, `/api/corporates-pit`), Brazil CVM (`category="insider"` → the yearly VLMO Open Data archive, CVM Instrução 358 art. 11). Live-verified against real companies on all three. Singapore SGX not shipped - see below |
-| Institutional ownership / major shareholding | 13F-HR holdings reports | Major/substantial shareholding notifications (EU Transparency Directive, UK DTR5, India shareholding pattern) | **Shipped**: UK FCA NSM (`category="major_holdings"` → NSM type code `HOL`), India NSE (`category="major_holdings"` → periodic SEBI (LODR) Regulation 31 shareholding pattern, `/api/corporate-share-holdings-master`, includes a real downloadable XBRL document per filing). Brazil's VLMO combines this with insider trading in one filing, so it's covered by `category="insider"` there, not a separate category |
+| Institutional ownership / major shareholding | 13F-HR holdings reports | Major/substantial shareholding notifications (EU Transparency Directive, UK DTR5, India shareholding pattern) | **Shipped**: UK FCA NSM (`category="major_holdings"` → NSM type code `HOL`), India NSE (`category="major_holdings"` → periodic SEBI (LODR) Regulation 31 shareholding pattern, `/api/corporate-share-holdings-master`, includes a real downloadable XBRL document per filing). Brazil's VLMO combines this with insider trading in one filing, so it's covered by `category="insider"` there, not a separate category. **13F-style reverse lookup also shipped for UK NSM only** (`search_major_holders()`) - see below for the honest scope of that |
+| Full-text filing search | EDGAR full-text search | A keyword search across every issuer's disclosures, not one company at a time | **Shipped** for UK FCA NSM (`headline` criterion - NSM's own top-level `keyword` field is a confirmed no-op) and Brazil CVM (the yearly IPE archive already covers every issuer, filtered client-side by subject/type). `search_disclosures()`. Not attempted for other sources this pass |
+| Company facts (multi-period) | `get_facts()` / XBRL company-concept time series | A multi-year view of one line item across a company's whole filing history, not one filing's statements | **Shipped**, and market-agnostic: `get_company_facts()` is pure composition over `list_filings()` + `get_filing_financials()`, merging newest-filing-wins per period. Works for every market with structured or PDF-derived financials already - no adapter changes were needed |
 | Current reports | 8-K | Ad-hoc/regulatory news disclosures (UK RNS, EU ad-hoc disclosure, most exchanges' "material information" feed) | Not built. `filings()` already returns every disclosure type these feeds carry when `category` isn't `"accounts"`/`"insider"`/`"major_holdings"` - callers can filter client-side on `Filing.category`/`Filing.filing_type` today. A dedicated `category="current_report"` mapping per source (an explicit type-code allowlist, e.g. NSM's `UPD`/`ACQ`/`DIS`/`TST`/`BOA`) is a smaller, well-scoped follow-up, not attempted this pass |
 | Proxy statements | DEF 14A | AGM/EGM notices and resolutions (published alongside annual reports on most exchanges) | Not built. Same shape as current reports - already present unfiltered in most feeds (NSM's `RAG`/`NOA`/`ROM` type codes, for example) |
 | Fund/ETF data | N-PORT, N-CEN, fund holdings | Not a close match outside the US in most of these markets - fund regulation is typically separate from the listed-company regime this project covers. Lowest priority; treat as out of scope unless a specific market's fund disclosure regime is clearly public and keyless | Not built, not planned |
@@ -72,7 +74,20 @@ blanket "add everything everywhere" plan.
 1. **UK FCA NSM** - done. `DSH` (Director/PDMR Shareholding) and `HOL`
    (Holding(s) in Company) confirmed live against NSM's own search results
    and added to `_NSM_CATEGORY_TYPE_CODES` in `service.py`. No new adapter
-   code needed, exactly as predicted.
+   code needed, exactly as predicted. Also gained full-text search
+   (`search_disclosures()`, a `headline` criterion - NSM's top-level
+   `keyword` field is a confirmed no-op) and structured TR-1 parsing
+   (`openfilings/ownership.py`): FCA prescribes a fixed section order for
+   the "Standard form for notification of major holdings," which held
+   across four real filings from different companies. `search_major_holders()`
+   is the honest version of a 13F-style reverse lookup this project can
+   actually build: NSM's search index doesn't carry the holder's identity
+   anywhere (confirmed live - `related_org` is empty on every HOL hit; the
+   name only exists inside each filing's document body), so it's a bounded
+   scan of the `scan_limit` most recent TR-1 filings, not a real-time
+   index. Costs one document fetch per scanned filing - it does not scale
+   to "give me BlackRock's entire UK portfolio" without scanning years of
+   history.
 2. **India NSE** - done. `category="insider"` reads SEBI PIT disclosures
    (person name, transaction direction, share count, a real downloadable
    XBRL document) from `/api/corporates-pit`. `category="major_holdings"`
@@ -86,7 +101,10 @@ blanket "add everything everywhere" plan.
    reusing `_filing_from_row` and the existing `structured_archive()`
    fetch/cache path with zero new HTTP client code. The archive ships two
    CSVs per year (a per-company index and a much larger per-person detail
-   file); only the index is parsed.
+   file); only the index is parsed. Also gained full-text search
+   (`search_disclosures()`) for free: the yearly IPE archive already
+   covers every issuer, so this just skips the per-company filter and
+   matches the keyword against subject/type instead.
 4. **Singapore SGX** - **not shipped, genuinely blocked this pass**. SGX's
    general corporate-announcements API (`api.sgx.com/corporateannouncements/v1.0`,
    found via the same technique that surfaced ASX's and KAP's endpoints)
@@ -128,11 +146,18 @@ of this pass.
    major-shareholding coverage for UK NSM, India NSE, and Brazil CVM~~ -
    done. Live-verified end-to-end on all three; Singapore SGX hit a genuine
    access-control block and was left unshipped rather than pushed through.
-4. Indonesia, Thailand, and Chile are on hold, not needed right now -
+4. ~~Full-text disclosure search, multi-period company facts, and
+   structured UK major-holder parsing/reverse lookup~~ - done.
+   `search_disclosures()` (NSM, CVM), `get_company_facts()` (every market
+   with financials, no adapter changes), `list_major_holders()` /
+   `search_major_holders()` (NSM only - the only source where the holder's
+   identity is even extractable, and only as a bounded scan, not a real
+   index).
+5. Indonesia, Thailand, and Chile are on hold, not needed right now -
    revisit with live-network reconnaissance when they matter again.
-5. `category="current_report"`/`"proxy"` for NSM/NSE/CVM - the cheapest
+6. `category="current_report"`/`"proxy"` for NSM/NSE/CVM - the cheapest
    remaining EdgarTools-parity step, since it only needs a type-code
    allowlist per source, no new HTTP calls.
-6. ESEF's 13 national OAMs for insider/major-shareholding, and
+7. ESEF's 13 national OAMs for insider/major-shareholding, and
    Mexico/Peru/Colombia/Canada/Japan research for the same - largest
    remaining lift, lowest priority.

@@ -135,6 +135,10 @@ async def test_mcp_registers_progressive_disclosure_tools() -> None:
     assert {tool.name for tool in tools} == {
         "companies_search",
         "filings_list",
+        "disclosures_search",
+        "company_facts",
+        "major_holders_list",
+        "major_holders_search",
         "sedar_filing_import",
         "filing_outline",
         "filing_sections",

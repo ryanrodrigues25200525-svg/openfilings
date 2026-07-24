@@ -86,6 +86,33 @@ All notable changes to OpenFilings are documented in this file.
   corporate-announcements API returned a genuine AWS API Gateway `403
   ForbiddenException`, not a missing route, and this project doesn't push
   past real access-control blocks.
+- Added `search_disclosures()` - full-text keyword search across every
+  issuer's disclosures for one source, not scoped to a company. FCA NSM's
+  own top-level `keyword` search field is a no-op (confirmed live: it
+  doesn't change result counts at all); this uses a `headline` criterion
+  instead, which does filter. CVM's yearly IPE archive already covers
+  every issuer in one file, so this filters it by subject/type instead of
+  a new endpoint. Exposed via the CLI (`search-disclosures`) and MCP
+  (`disclosures_search`).
+- Added `get_company_facts()` - merges a company's most recent structured
+  filings into one multi-period time series per line item, EdgarTools'
+  `get_facts()` concept. Pure composition over `list_filings()`/
+  `get_filing_financials()`, so it works for every market with structured
+  or PDF-derived financials already, with zero adapter changes. Exposed
+  via the CLI (`facts`) and MCP (`company_facts`).
+- Added structured parsing for UK TR-1 major-shareholding notifications
+  (`openfilings.ownership.extract_nsm_major_holder`): holder name, ISIN,
+  reason, dates, and position, parsed from the filing's rendered HTML body
+  by its fixed FCA-prescribed section order - verified against four real
+  filings from different companies. `list_major_holders()` lists and
+  parses one UK issuer's notifications; `search_major_holders()` is a
+  bounded, 13F-style reverse lookup (what has a given holder disclosed a
+  stake in, across UK issuers) - NSM's search index doesn't carry the
+  holder's identity, only each filing's document body does, so this scans
+  the `scan_limit` most recent TR-1 filings and parses each one, not the
+  full historical record. Exposed via the CLI (`major-holders`,
+  `search-major-holders`) and MCP (`major_holders_list`,
+  `major_holders_search`).
 
 ### Fixed
 

@@ -98,6 +98,33 @@ async def test_list_filings_insider_category_reads_vlmo_dataset() -> None:
 
 
 @pytest.mark.asyncio
+async def test_search_disclosures_matches_across_every_issuer() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == IPE_URL_PATH
+        return httpx.Response(200, content=_ipe_archive())
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        source = CvmClient(client=http, today=lambda: date(2026, 7, 22))
+        filings = await source.search_disclosures("comunicados", limit=5)
+
+    assert [filing.id for filing in filings] == ["br_cvm_1052752"]
+    assert filings[0].issuer_name == "BANCO DO BRASIL S.A."
+
+
+@pytest.mark.asyncio
+async def test_search_disclosures_empty_keyword_returns_nothing() -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _: (_ for _ in ()).throw(AssertionError("should not request"))
+        )
+    ) as http:
+        source = CvmClient(client=http)
+        filings = await source.search_disclosures("   ")
+
+    assert filings == []
+
+
+@pytest.mark.asyncio
 async def test_list_filings_rejects_non_exchange_company_code() -> None:
     def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=_company_csv())

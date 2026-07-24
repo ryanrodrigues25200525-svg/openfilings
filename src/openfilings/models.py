@@ -286,6 +286,63 @@ class FilingFinancials(DomainModel):
         return "\n".join(statement.to_markdown() for statement in self.statements)
 
 
+class CompanyFacts(DomainModel):
+    """A multi-period time series per line item, merged across a company's
+    most recent structured filings - EdgarTools' ``get_facts()`` concept,
+    not tied to any single filing."""
+
+    company_id: str
+    statements: tuple[FinancialStatement, ...]
+    filing_ids: tuple[str, ...]
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    def statement(self, statement_type: StatementType) -> FinancialStatement | None:
+        return next(
+            (
+                statement
+                for statement in self.statements
+                if statement.statement_type == statement_type
+            ),
+            None,
+        )
+
+    def income_statement(self) -> FinancialStatement | None:
+        return self.statement("income_statement")
+
+    def balance_sheet(self) -> FinancialStatement | None:
+        return self.statement("balance_sheet")
+
+    def cash_flow_statement(self) -> FinancialStatement | None:
+        return self.statement("cash_flow_statement")
+
+    def comprehensive_income(self) -> FinancialStatement | None:
+        return self.statement("comprehensive_income")
+
+    def changes_in_equity(self) -> FinancialStatement | None:
+        return self.statement("changes_in_equity")
+
+    def to_markdown(self) -> str:
+        return "\n".join(statement.to_markdown() for statement in self.statements)
+
+
+class MajorHolderNotification(DomainModel):
+    """One TR-1-style major-shareholding notification, parsed from a
+    ``category="major_holdings"`` filing's document body into structured
+    fields instead of a bare filing pointer."""
+
+    filing_id: str
+    company_id: str
+    issuer_name: str
+    holder_name: str
+    isin: str | None = None
+    reason: str | None = None
+    date_crossed: date | None = None
+    date_notified: date | None = None
+    total_percent: Decimal | None = None
+    total_voting_rights: int | None = None
+    source_url: str
+
+
 class CacheStats(DomainModel):
     companies: int = Field(ge=0)
     filings: int = Field(ge=0)

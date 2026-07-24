@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from datetime import date
+from decimal import Decimal
+from pathlib import Path
 
 import httpx
 import pytest
@@ -9,8 +12,15 @@ import pytest
 from openfilings.adapters.base import SourceDocument
 from openfilings.adapters.esef import NETHERLANDS, EsefClient
 from openfilings.adapters.fca_nsm import FcaNsmClient
-from openfilings.exceptions import ConfigurationError
-from openfilings.models import Filing
+from openfilings.exceptions import ConfigurationError, FinancialsUnavailableError
+from openfilings.models import (
+    Filing,
+    FilingFinancials,
+    FinancialLineItem,
+    FinancialStatement,
+    FinancialValue,
+    ReportingPeriod,
+)
 from openfilings.service import OpenFilingsService
 from openfilings.storage.sqlite import SQLiteCache
 
@@ -79,6 +89,207 @@ async def test_nsm_insider_and_major_holdings_categories_map_to_type_codes(
     major_holdings_criteria = payloads[-1]["criteriaObj"]["criteria"]
     assert {"name": "type_code", "value": ["dsh"]} in insider_criteria
     assert {"name": "type_code", "value": ["hol"]} in major_holdings_criteria
+
+
+@pytest.mark.asyncio
+async def test_search_disclosures_rejects_unsupported_source(tmp_path) -> None:
+    cache = SQLiteCache(tmp_path / "cache.sqlite3")
+    service = OpenFilingsService(cache)
+
+    with pytest.raises(ConfigurationError, match="fca_nsm and cvm"):
+        await service.search_disclosures("lithium", source="sedar")  # type: ignore[arg-type]
+
+    cache.close()
+
+
+@pytest.mark.asyncio
+async def test_get_company_facts_merges_multiple_filings_newest_first(
+    tmp_path,
+) -> None:
+    cache = SQLiteCache(tmp_path / "cache.sqlite3")
+    service = OpenFilingsService(cache)
+
+    filings = [
+        Filing(
+            id="f1",
+            company_id="c1",
+            source="cvm",
+            source_id="1",
+            title="t1",
+            category="accounts",
+            filing_type="annual",
+            filing_date=date(2026, 3, 1),
+            period_end=date(2025, 12, 31),
+            issuer_name="X",
+            source_url="https://example.test/1",
+        ),
+        Filing(
+            id="f2",
+            company_id="c1",
+            source="cvm",
+            source_id="2",
+            title="t2",
+            category="accounts",
+            filing_type="annual",
+            filing_date=date(2025, 3, 1),
+            period_end=date(2024, 12, 31),
+            issuer_name="X",
+            source_url="https://example.test/2",
+        ),
+    ]
+    period_a = ReportingPeriod(
+        id="pa", end_date=date(2025, 12, 31), kind="instant", fiscal_period="instant"
+    )
+    period_b = ReportingPeriod(
+        id="pb", end_date=date(2024, 12, 31), kind="instant", fiscal_period="instant"
+    )
+    financials_by_filing = {
+        "f1": FilingFinancials(
+            filing_id="f1",
+            company_id="c1",
+            source_url="https://example.test/1",
+            statements=(
+                FinancialStatement(
+                    statement_type="balance_sheet",
+                    title="Balance sheet",
+                    currency="USD",
+                    line_items=(
+                        FinancialLineItem(
+                            code="total_assets",
+                            name="Total assets",
+                            concept="Assets",
+                            values=(
+                                FinancialValue(period=period_a, value=Decimal("100")),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+            fact_count=1,
+            sha256="0" * 64,
+        ),
+        "f2": FilingFinancials(
+            filing_id="f2",
+            company_id="c1",
+            source_url="https://example.test/2",
+            statements=(
+                FinancialStatement(
+                    statement_type="balance_sheet",
+                    title="Balance sheet",
+                    currency="USD",
+                    line_items=(
+                        FinancialLineItem(
+                            code="total_assets",
+                            name="Total assets",
+                            concept="Assets",
+                            values=(
+                                FinancialValue(period=period_b, value=Decimal("90")),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+            fact_count=1,
+            sha256="0" * 64,
+        ),
+    }
+
+    async def fake_list_filings(company_id, **_kwargs):
+        return filings
+
+    async def fake_get_financials(filing_id, **_kwargs):
+        return financials_by_filing[filing_id]
+
+    service.list_filings = fake_list_filings  # type: ignore[method-assign]
+    service.get_filing_financials = fake_get_financials  # type: ignore[method-assign]
+
+    facts = await service.get_company_facts("c1", periods=2)
+    cache.close()
+
+    assets = facts.balance_sheet().line_items[0]
+    assert {value.period.label: value.value for value in assets.values} == {
+        period_a.label: Decimal("100"),
+        period_b.label: Decimal("90"),
+    }
+    assert facts.filing_ids == ("f1", "f2")
+
+
+@pytest.mark.asyncio
+async def test_get_company_facts_raises_when_no_filing_has_financials(
+    tmp_path,
+) -> None:
+    cache = SQLiteCache(tmp_path / "cache.sqlite3")
+    service = OpenFilingsService(cache)
+
+    async def fake_list_filings(company_id, **_kwargs):
+        return []
+
+    service.list_filings = fake_list_filings  # type: ignore[method-assign]
+
+    with pytest.raises(FinancialsUnavailableError):
+        await service.get_company_facts("c1", periods=2)
+
+    cache.close()
+
+
+@pytest.mark.asyncio
+async def test_major_holders_pipeline_lists_and_reverse_searches(tmp_path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            return httpx.Response(200, json=_nsm_hol_search_response())
+        if request.url.path.endswith("/tr1.html"):
+            return httpx.Response(200, text=_tr1_fixture())
+        raise AssertionError(f"Unexpected request: {request.url}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        nsm = FcaNsmClient(client=http_client)
+        cache = SQLiteCache(tmp_path / "cache.sqlite3")
+        service = OpenFilingsService(cache, nsm_source=nsm)
+
+        holders = await service.list_major_holders(
+            "uk_lei_213800TSKOLX4EU6L377", limit=5
+        )
+        matches = await service.search_major_holders(
+            "Boston Partners", scan_limit=5, limit=5
+        )
+        no_matches = await service.search_major_holders(
+            "Nobody Holdings Ltd", scan_limit=5, limit=5
+        )
+        cache.close()
+
+    assert len(holders) == 1
+    assert holders[0].holder_name == (
+        "Boston Partners FKA Robeco Investment Management, Inc."
+    )
+    assert len(matches) == 1
+    assert no_matches == []
+
+
+def _nsm_hol_search_response() -> dict[str, object]:
+    return {
+        "hits": {
+            "hits": [
+                {
+                    "_source": {
+                        "disclosure_id": "tr1-disclosure",
+                        "company": "BABCOCK INTERNATIONAL GROUP PLC",
+                        "lei": "213800TSKOLX4EU6L377",
+                        "type": "Holding(s) in Company",
+                        "headline": "Holding(s) in Company",
+                        "type_code": "HOL",
+                        "download_link": "NSM/RNS/tr1.html",
+                        "publication_date": "2026-07-24T16:22:27Z",
+                        "document_date": "2026-07-24T16:22:27Z",
+                    }
+                }
+            ]
+        }
+    }
+
+
+def _tr1_fixture() -> str:
+    path = Path(__file__).parent / "fixtures" / "fca_nsm_tr1_holding.html"
+    return path.read_text(encoding="utf-8")
 
 
 @pytest.mark.asyncio

@@ -10,9 +10,11 @@ from typing import Any
 from openfilings.domain import DocumentSection
 from openfilings.models import (
     Company,
+    CompanyFacts,
     Filing,
     FilingFinancials,
     FinancialStatement,
+    MajorHolderNotification,
     StatementType,
 )
 
@@ -140,6 +142,30 @@ def filing_summary(filing: Filing) -> dict[str, Any]:
     )
 
 
+def major_holder_summary(holder: MajorHolderNotification) -> dict[str, Any]:
+    return _without_none(
+        {
+            "filing_id": holder.filing_id,
+            "company_id": holder.company_id,
+            "issuer_name": holder.issuer_name,
+            "holder_name": holder.holder_name,
+            "isin": holder.isin,
+            "reason": holder.reason,
+            "date_crossed": (
+                holder.date_crossed.isoformat() if holder.date_crossed else None
+            ),
+            "date_notified": (
+                holder.date_notified.isoformat() if holder.date_notified else None
+            ),
+            "total_percent": (
+                str(holder.total_percent) if holder.total_percent is not None else None
+            ),
+            "total_voting_rights": holder.total_voting_rights,
+            "source_url": holder.source_url,
+        }
+    )
+
+
 def section_summary(section: DocumentSection) -> dict[str, Any]:
     return {
         "title": section.title,
@@ -197,6 +223,43 @@ def financials_view(
         "company_id": financials.company_id,
         "extraction_method": financials.extraction_method,
         "fact_count": financials.fact_count,
+        "statements": [
+            _statement_view(
+                statement,
+                periods=periods,
+                detail=detail,
+                max_line_items=max_line_items,
+            )
+            for statement in selected
+        ],
+    }
+
+
+def company_facts_view(
+    facts: CompanyFacts,
+    *,
+    statements: Sequence[StatementType] | None,
+    periods: int,
+    detail: str,
+    max_line_items: int,
+) -> dict[str, Any]:
+    validate_limit(periods, maximum=MAX_FINANCIAL_PERIODS, name="periods")
+    validate_limit(
+        max_line_items,
+        maximum=MAX_FINANCIAL_LINE_ITEMS,
+        name="max_line_items",
+    )
+    if detail not in {"minimal", "standard", "full"}:
+        raise ValueError("detail must be minimal, standard, or full.")
+    selected_types = _validated_statement_types(statements)
+    selected = [
+        statement
+        for statement in facts.statements
+        if selected_types is None or statement.statement_type in selected_types
+    ]
+    return {
+        "company_id": facts.company_id,
+        "filing_ids": list(facts.filing_ids),
         "statements": [
             _statement_view(
                 statement,
