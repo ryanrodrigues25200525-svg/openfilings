@@ -14,6 +14,7 @@ from openfilings.storage.sqlite import SQLiteCache
 
 COMPANY_URL_PATH = "/dados/CIA_ABERTA/CAD/DADOS/cad_cia_aberta.csv"
 IPE_URL_PATH = "/dados/CIA_ABERTA/DOC/IPE/DADOS/ipe_cia_aberta_2026.zip"
+VLMO_URL_PATH = "/dados/CIA_ABERTA/DOC/VLMO/DADOS/vlmo_cia_aberta_2026.zip"
 DOCUMENT_PATH = "/ENET/frmDownloadDocumento.aspx"
 DOCUMENT_URL = (
     "https://www.rad.cvm.gov.br/ENET/frmDownloadDocumento.aspx?"
@@ -71,6 +72,29 @@ async def test_list_filings_maps_accounts_and_ignores_unrelated_documents() -> N
     assert annual.pdf_available is True
     assert annual.xbrl_available is False
     assert interim.filing_type == "interim"
+
+
+@pytest.mark.asyncio
+async def test_list_filings_insider_category_reads_vlmo_dataset() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == COMPANY_URL_PATH:
+            return httpx.Response(200, content=_company_csv())
+        if request.url.path == VLMO_URL_PATH:
+            return httpx.Response(200, content=_vlmo_archive())
+        assert "/DOC/VLMO/DADOS/" in request.url.path
+        return httpx.Response(404)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        source = CvmClient(client=http, today=lambda: date(2026, 7, 22))
+        filings = await source.list_filings(
+            "br_cvm_001023", category="insider", limit=5
+        )
+
+    assert [filing.id for filing in filings] == ["br_cvm_1055000"]
+    filing = filings[0]
+    assert filing.category == "insider"
+    assert filing.filing_type == "insider"
+    assert filing.company_id == "br_cvm_001023"
 
 
 @pytest.mark.asyncio
@@ -201,4 +225,28 @@ def _ipe_archive() -> bytes:
             "ipe_cia_aberta_2026.csv",
             (header + annual + interim + unrelated).encode("cp1252"),
         )
+    return stream.getvalue()
+
+
+def _vlmo_archive() -> bytes:
+    header = (
+        "CNPJ_Companhia;Nome_Companhia;Data_Referencia;Versao;Codigo_CVM;"
+        "Categoria;Tipo;Data_Entrega;Tipo_Apresentacao;Motivo_Reapresentacao;"
+        "Protocolo_Entrega;Link_Download\n"
+    )
+    row = (
+        "00.000.000/0001-91;BANCO DO BRASIL S.A.;2026-01-01;1;1023;"
+        "Valores Mobiliários negociados e detidos (art. 11 da Instr. CVM "
+        "nº 358);Posição Consolidada;2026-02-09;AP - Apresentação;;"
+        "001023IPE010120260101902748-30;"
+        "https://www.rad.cvm.gov.br/ENET/frmDownloadDocumento.aspx?Tela=ext&"
+        "descTipo=IPE&CodigoInstituicao=1&numProtocolo=1475060&"
+        "numSequencia=1055000&numVersao=1\n"
+    )
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("vlmo_cia_aberta_2026.csv", (header + row).encode("cp1252"))
+        # The real VLMO archive also ships a much larger per-person detail
+        # file; the client must ignore it and only parse the index file.
+        archive.writestr("vlmo_cia_aberta_con_2026.csv", header.encode("cp1252"))
     return stream.getvalue()

@@ -68,6 +68,24 @@ All notable changes to OpenFilings are documented in this file.
   is skipped entirely. Live-verified end-to-end (search, filings,
   financials, balance-sheet identity) against Deniz Gayrimenkul GYO,
   Turkcell, and BIM.
+- Added `category="insider"` (director/PDMR dealing notifications) and
+  `category="major_holdings"` (substantial-shareholding notifications) to
+  UK FCA NSM, India NSE, and Brazil CVM, alongside the existing
+  `category="accounts"`. NSM maps these to its own `DSH`/`HOL` type codes
+  on the same feed already used for accounts - no new adapter code. NSE
+  reads SEBI's PIT (`/api/corporates-pit`) and shareholding-pattern
+  (`/api/corporate-share-holdings-master`) endpoints directly, each
+  returning a real downloadable XBRL document; `NseClient.document_url()`
+  was widened to accept `/corporate/xbrl/*.xml` alongside the existing
+  `/annual_reports/*.pdf|.zip`. CVM reads its own yearly VLMO Open Data
+  archive (CVM Instrução 358 art. 11) - the same row shape as the IPE
+  archive already used for `category="accounts"`, just a different yearly
+  ZIP, and it combines insider trading and holdings into one filing so
+  both are covered by `category="insider"` alone. Live-verified end-to-end
+  on all three. Singapore SGX was investigated and not added: its general
+  corporate-announcements API returned a genuine AWS API Gateway `403
+  ForbiddenException`, not a missing route, and this project doesn't push
+  past real access-control blocks.
 
 ### Fixed
 

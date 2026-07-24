@@ -73,6 +73,17 @@ from openfilings.xbrl.sfc_cuif_structured import extract_sfc_cuif_balance_sheet
 
 _Result = TypeVar("_Result")
 
+# FCA NSM has no generic "category" filter of its own, only disclosure type
+# codes. "DSH" (Director/PDMR Shareholding) and "HOL" (Holding(s) in Company)
+# are the NSM type codes for MAR Article 19 dealing notifications and DTR5
+# major-shareholding notifications, confirmed live against NSM's own search
+# results.
+_NSM_CATEGORY_TYPE_CODES: dict[str, list[str]] = {
+    "accounts": ["ACS"],
+    "insider": ["DSH"],
+    "major_holdings": ["HOL"],
+}
+
 
 class OpenFilingsService:
     """Coordinates source retrieval, identity resolution, extraction, and caching."""
@@ -357,8 +368,8 @@ class OpenFilingsService:
                 # can be any announcement type (a director dealing, an
                 # admission notice, ...), not a financial statement.
                 effective_type_codes = nsm_type_codes
-                if effective_type_codes is None and category == "accounts":
-                    effective_type_codes = ["ACS"]
+                if effective_type_codes is None:
+                    effective_type_codes = _NSM_CATEGORY_TYPE_CODES.get(category or "")
                 calls.append(
                     self._nsm.list_filings(
                         nsm_identifier,
@@ -898,9 +909,7 @@ class OpenFilingsService:
         if match is None:
             return None
         try:
-            result = await nse.integrated_filing_xbrl(
-                match.group(1), filing.period_end
-            )
+            result = await nse.integrated_filing_xbrl(match.group(1), filing.period_end)
         except SourceError:
             return None
         if result is None:

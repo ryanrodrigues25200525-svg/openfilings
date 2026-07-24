@@ -18,30 +18,16 @@ real blocker was confirmed (paywall, no public API, discontinued access).
 | Market | Regulator/source | Format | Status |
 |---|---|---|---|
 | Chile | CMF (Comisión para el Mercado Financiero) | XBRL (filer-submission taxonomy) | Downgraded this pass. CMF's public "Consulta de Estados Financieros" query tool (`sa_fecu_index.php`) is a legacy PHP form dating to the pre-IFRS Chilean-GAAP "FECU" regime, not a JSON API - it needs real POST-form reconnaissance (form field names, result-page shape) to find any per-company download link, and the IFRS-era query tool (`w4-propertyvalue-46324.html`) rendered no static content to inspect. CMF's own XBRL system (SEIL) is a **filer submission channel**, not a public read/download API - no evidence found this pass that submitted instances are re-exposed for public download anywhere. `cmfchile.cl` was also unreachable from this session's direct network tooling (DNS SERVFAIL, an environment issue, not a site block) - live-network inspection (the same technique that found ASX's and KAP's hidden JSON endpoints) is needed before this can be ranked Tier A again, and no build should start without it |
-| Indonesia | IDX financial-statements portal | Inline XBRL + `instance.zip` per company/quarter | Static per-issuer download URLs (`idx.co.id/.../{TICKER}/instance.zip`), no login on the file endpoints themselves. Same shape as the ESEF/`filings.xbrl.org` pattern that has worked repeatedly. Needs one live pull to confirm the instance documents use standard IFRS concept names (if so, the existing tagged-XBRL pipeline reuses with near-zero new mapping code, same as India/NSE, South Korea/DART, and Turkey/KAP) |
-| Thailand | Thai SEC IDISC (`market.sec.or.th/public/idisc/`) | Raw filing ZIPs containing `FINANCIAL_STATEMENTS.XLS[X]` | SET's own "SMART Marketplace" API is a paid subscription, but the underlying regulatory filings on SEC IDISC are the public disclosure record and appear directly downloadable (a third-party open dataset, `thaifin`, is built entirely from them with no auth). Needs confirmation that IDISC's own listing/search endpoints are keyless, not just the file host |
 
 **Turkey shipped this pass** (see "Deprioritized or dead end" below - it's
-no longer future work). **Recommendation: spend one research/build cycle
-each on Indonesia and Thailand** to confirm the keyless path holds at the
-API layer, not just the file layer; **re-research Chile with live-network
-tooling** before deciding whether to build it at all.
-
-### Tier B - PDF-only ceiling, feasible but lower priority
-
-| Market | Regulator/source | Format | Status |
-|---|---|---|---|
-| Philippines | PSE EDGE (`edge.pse.com.ph`) | PDF only, no XBRL/API found | Same effort class as Singapore/Peru - keyless disclosure portal, PDF-heuristic extraction only. Worth adding once the Tier A markets are done, using the same "accept PDF as the ceiling" policy already applied to Singapore and Mexico's annual report |
-| UAE (DFM) | Dubai Financial Market | PDF only, confirmed keyless document host | New this pass - real consolidated financial statements are directly downloadable with no login at `feeds.dfm.ae/documents/...` (verified against Emaar Properties, DFM itself, Al Ansari Financial Services, Dubai Taxi Company). The disclosures listing page is a JS single-page app, so the actual per-company listing API isn't visible from search - needs the same live-network-inspection approach that found ASX's hidden endpoint. UAE's regulator (SCA) has run mandatory XBRL filing since 2011 (IFRS-taxonomy-based, same shortcut that worked for India/DART), but the submission portal (`xbrl-uae.ae`) is filer-only (National ID + authorization letter required) - no public read/download endpoint for the raw instances was found, so treat as PDF-only until proven otherwise |
-| UAE (ADX) | Abu Dhabi Securities Exchange | PDF only, plausible document host | Same regulator (SCA) as DFM. Disclosure/financial-report pages are JS SPAs; found a `adxservices.adx.ae/WebServices/DataServices/contentDownload.aspx?doc={id}` pattern suggesting a similar discoverable backend to DFM's, but not yet confirmed live |
-
-### Tier C - needs one more targeted check before deciding
-
-| Market | Regulator/source | Open question |
-|---|---|---|
-| Saudi Arabia | Tadawul Ifsah disclosure system | Ifsah tags filings in XBRL per Tadawul's own 2017 announcement, but the only structured *product* found (eReference Data) reads as a paid subscription. Unconfirmed whether Ifsah's underlying per-filing XBRL is separately public without eReference. One direct check against a live Ifsah filing page (not the eReference product page) needed before ranking this Tier A or dead end |
-| New Zealand | NZX | NZX's own official data products (i-search, TransferHub) are subscription/license-gated with IP-whitelisted SFTP - not keyless. A third-party product ("NZXplorer") advertises a free API with iXBRL access, but it's a commercial reseller built on NZX's own PDFs (uses an LLM for extraction per its own docs), not an official public feed - same category as FinancialReports.eu, not a foundation to adapt against. The real open question, unresolved, is whether NZX's own public announcements page has an undocumented free JSON API the way ASX did - needs the same live-network-inspection approach, not more search-engine research |
-| Pakistan | PSX (`dps.psx.com.pk`) | A real disclosure API exists (`/announcements`, `/symbols`, permanent-URL PDF documents), matching the pattern that has worked elsewhere. But the portal carries an explicit legal notice prohibiting "dissemination, transmission, sale, and commercial use of Market Data feed... without acquiring respective rights/license." Ambiguously worded (likely aimed at price/quote data, not regulatory disclosure PDFs) but real enough to need a legal read before building, not a clean green light like DFM |
+no longer future work). Indonesia, Thailand, the Philippines, UAE (DFM/ADX),
+Saudi Arabia, New Zealand, and Pakistan were dropped from this file by
+request - none of them had any adapter code written against them (confirmed
+by searching `src/` before removal), so nothing needed reverting. If any of
+these markets come back into scope later, they need fresh research rather
+than resurrecting this entry - the findings above are not preserved
+elsewhere. **Re-research Chile with live-network tooling** before deciding
+whether to build it at all.
 
 ### Deprioritized or dead end (carried over from earlier passes, unchanged)
 
@@ -49,7 +35,6 @@ tooling** before deciding whether to build it at all.
 - **Argentina, Malaysia** - confirmed not worth pursuing in the Chile/Argentina/Indonesia/Malaysia research pass (no accessible structured or reliably keyless PDF path at reasonable effort).
 - **Qatar** - no public disclosure API or XBRL program found this pass; only market-news coverage. Not a lead.
 - **Egypt** - dead end: EGX's disclosure/reports pages are behind a CAPTCHA bot-check (a hard blocker per this project's own rules against bypassing bot detection), and EGX only announced its XBRL rollout for 2025 - too immature even if the CAPTCHA weren't disqualifying on its own.
-- **Australia, Switzerland** - a dedicated subagent researched and began building these; its worktree/branch (`agent-a70c89f4cfadcca12`) had not yet reported completion as of this writing. Check its output before re-researching from scratch.
 - **South Korea (DART)** - reconciled into `main` (rebased cleanly, all tests pass). Still not live-verified - no `DART_API_KEY` was available when built or reconciled. Live-verify against a real key before counting it as shipped.
 - **Australia (ASX)** - reconciled into `main` (rebased cleanly, all tests pass, includes live-verified BHP/AQC extraction from the subagent's own session).
 - **Turkey (KAP)** - shipped this pass. KAP's official Rest API data-distribution
@@ -73,74 +58,81 @@ before "more data types per market." This section is that next layer,
 scoped against what's actually feasible per already-shipped market - not a
 blanket "add everything everywhere" plan.
 
-| EdgarTools feature | SEC data it reads | Non-US equivalent concept |
-|---|---|---|
-| Insider transactions | Forms 3/4/5 | Director/PDMR dealing notifications (EU Market Abuse Regulation Art. 19, UK PDMR rules, India SEBI PIT, Singapore SGXNet) |
-| Institutional ownership (13F) | 13F-HR holdings reports | Major/substantial shareholding notifications (EU Transparency Directive, UK DTR5, India SAST) |
-| Current reports | 8-K | Ad-hoc/regulatory news disclosures (UK RNS, EU ad-hoc disclosure, most exchanges' "material information" feed) |
-| Proxy statements | DEF 14A | AGM/EGM notices and resolutions (published alongside annual reports on most exchanges) |
-| Fund/ETF data | N-PORT, N-CEN, fund holdings | Not a close match outside the US in most of these markets - fund regulation is typically separate from the listed-company regime this project covers. Lowest priority; treat as out of scope unless a specific market's fund disclosure regime is clearly public and keyless |
-| Cross-company XBRL frames/comparison | `xbrl_frames` concept queries | Only meaningful once >1 market per region has consistent concept coverage - already true for the 13 ESEF countries via shared IFRS taxonomy concepts |
+| EdgarTools feature | SEC data it reads | Non-US equivalent concept | Status |
+|---|---|---|---|
+| Insider transactions | Forms 3/4/5 | Director/PDMR dealing notifications (EU MAR Art. 19, UK PDMR rules, India SEBI PIT) | **Shipped**: UK FCA NSM (`category="insider"` → NSM type code `DSH`), India NSE (`category="insider"` → SEBI PIT Regulation 7(2) disclosures, `/api/corporates-pit`), Brazil CVM (`category="insider"` → the yearly VLMO Open Data archive, CVM Instrução 358 art. 11). Live-verified against real companies on all three. Singapore SGX not shipped - see below |
+| Institutional ownership / major shareholding | 13F-HR holdings reports | Major/substantial shareholding notifications (EU Transparency Directive, UK DTR5, India shareholding pattern) | **Shipped**: UK FCA NSM (`category="major_holdings"` → NSM type code `HOL`), India NSE (`category="major_holdings"` → periodic SEBI (LODR) Regulation 31 shareholding pattern, `/api/corporate-share-holdings-master`, includes a real downloadable XBRL document per filing). Brazil's VLMO combines this with insider trading in one filing, so it's covered by `category="insider"` there, not a separate category |
+| Current reports | 8-K | Ad-hoc/regulatory news disclosures (UK RNS, EU ad-hoc disclosure, most exchanges' "material information" feed) | Not built. `filings()` already returns every disclosure type these feeds carry when `category` isn't `"accounts"`/`"insider"`/`"major_holdings"` - callers can filter client-side on `Filing.category`/`Filing.filing_type` today. A dedicated `category="current_report"` mapping per source (an explicit type-code allowlist, e.g. NSM's `UPD`/`ACQ`/`DIS`/`TST`/`BOA`) is a smaller, well-scoped follow-up, not attempted this pass |
+| Proxy statements | DEF 14A | AGM/EGM notices and resolutions (published alongside annual reports on most exchanges) | Not built. Same shape as current reports - already present unfiltered in most feeds (NSM's `RAG`/`NOA`/`ROM` type codes, for example) |
+| Fund/ETF data | N-PORT, N-CEN, fund holdings | Not a close match outside the US in most of these markets - fund regulation is typically separate from the listed-company regime this project covers. Lowest priority; treat as out of scope unless a specific market's fund disclosure regime is clearly public and keyless | Not built, not planned |
+| Cross-company XBRL frames/comparison | `xbrl_frames` concept queries | Only meaningful once >1 market per region has consistent concept coverage - already true for the 13 ESEF countries via shared IFRS taxonomy concepts | Not built |
 
-### Implementation plan, market by market (current 22 jurisdictions)
+### What's shipped vs. still open, market by market
 
-Ranked by how directly the existing adapter/pipeline extends, not by market
-importance:
-
-1. **ESEF markets (13 countries)** - insider dealing and major-shareholding
-   notifications are filed with each country's national Officially Appointed
-   Mechanism (OAM), which is *not* the same feed as `filings.xbrl.org`. This
-   is 13 separate research efforts, not one generic connector - the ESEF
-   shortcut that made statement extraction free (shared IFRS concepts) does
-   not apply here. Start with one country (Netherlands or France have the
-   most mature OAM APIs) as a proof of concept before generalizing.
-2. **UK FCA NSM** - the existing `FcaNsmClient` already lists disclosures by
-   type code (this session's `category="accounts"` → `"ACS"` fix touched
-   exactly this mechanism). PDMR dealing notices and major-shareholding
-   (TR-1) notices are separate NSM type codes on the *same* feed already
-   being polled - this is the lowest-effort extension available: add
-   `category="insider"`/`category="major_holdings"` mapped to their NSM type
-   codes, no new adapter needed.
-3. **India NSE** - insider trading (SAST/PIT) and shareholding-pattern
-   disclosures are published through NSE's existing corporate-announcements
-   API, the same family of endpoints the Integrated Filing XBRL adapter
-   already calls. Second-lowest effort.
-4. **Brazil CVM** - CVM Open Data (the same bulk-dataset pattern already used
-   for DFP/ITR financials) separately publishes insider-trading and
-   shareholding-notification datasets. Reuses the existing CVM Open Data
-   client shape.
-5. **Singapore SGX** - director/substantial-shareholder dealings are
-   disclosed via SGXNet, PDF/HTML only (no structured feed found for these
-   either) - same PDF-heuristic-as-ceiling policy that already applies to
-   Singapore's financials.
+1. **UK FCA NSM** - done. `DSH` (Director/PDMR Shareholding) and `HOL`
+   (Holding(s) in Company) confirmed live against NSM's own search results
+   and added to `_NSM_CATEGORY_TYPE_CODES` in `service.py`. No new adapter
+   code needed, exactly as predicted.
+2. **India NSE** - done. `category="insider"` reads SEBI PIT disclosures
+   (person name, transaction direction, share count, a real downloadable
+   XBRL document) from `/api/corporates-pit`. `category="major_holdings"`
+   reads periodic shareholding-pattern filings (promoter/public split, a
+   real downloadable XBRL document) from `/api/corporate-share-holdings-master`.
+   `NseClient.document_url()` was widened to also accept
+   `/corporate/xbrl/*.xml`, not just `/annual_reports/*.pdf|.zip`.
+3. **Brazil CVM** - done. `category="insider"` reads CVM's own yearly VLMO
+   Open Data archive (`dados.cvm.gov.br/dados/CIA_ABERTA/DOC/VLMO/DADOS/`) -
+   same row shape as the IPE archive already used for `category="accounts"`,
+   reusing `_filing_from_row` and the existing `structured_archive()`
+   fetch/cache path with zero new HTTP client code. The archive ships two
+   CSVs per year (a per-company index and a much larger per-person detail
+   file); only the index is parsed.
+4. **Singapore SGX** - **not shipped, genuinely blocked this pass**. SGX's
+   general corporate-announcements API (`api.sgx.com/corporateannouncements/v1.0`,
+   found via the same technique that surfaced ASX's and KAP's endpoints)
+   returns an AWS API Gateway `403 ForbiddenException` even with a plausible
+   `Origin`/`Referer` - a real access-control block, not a route that simply
+   doesn't exist (compare the "Missing Authentication Token" response from
+   a genuinely wrong path). Per this project's own rule against bypassing
+   bot/access-control detection, this was not pushed further. The
+   `financialreports/v1.0` endpoint the existing `SgxClient` already calls
+   only ever returns Annual Report / Sustainability Report items - it does
+   not carry director's-interest or substantial-shareholder disclosures, so
+   there was no cheaper path available inside the existing adapter.
+5. **ESEF markets (13 countries)** - not attempted. Insider dealing and
+   major-shareholding notifications are filed with each country's national
+   Officially Appointed Mechanism (OAM), which is *not* the same feed as
+   `filings.xbrl.org` (confirmed: `filings.xbrl.org` only ever carries
+   ESEF annual/interim financial reports, nothing else - there is nothing
+   to generalize a category filter over here). This is 13 separate research
+   efforts, not one generic connector. Still the largest remaining lift;
+   start with one country (Netherlands or France have the most mature OAM
+   APIs) as a proof of concept before generalizing.
 6. **Mexico, Peru, Colombia, Canada, Japan** - not yet researched for these
-   feature categories; lowest priority until the markets above are done.
+   feature categories; lowest priority until a reason to prioritize them
+   comes up.
 
-8-K-equivalent "current report" coverage and AGM/proxy notices are, in
-practice, already partially reachable today for every keyless source: most
-regulator feeds (NSM, ESEF's `filings.xbrl.org`, CVM Open Data, NSE) list
-*all* disclosure types, not just financial statements - `filings()` already
-returns them, they're just not yet filtered/labeled by category the way
-`category="accounts"` filters UK filings today. The fastest first step
-across every market is generalizing that existing category-filter pattern
-(built for UK this session) to expose whatever non-financial disclosure
-types each source's feed already contains, before building any new
-adapters.
+Current reports (8-K-equivalent) and AGM/proxy notices are, in practice,
+already partially reachable today wherever `category="insider"`/
+`"major_holdings"` now work (NSM, NSE, CVM): those feeds carry every other
+disclosure type too, just not yet given their own named category. Building
+that out is a smaller, separate follow-up (see the table above), not part
+of this pass.
 
 ## Suggested sequencing
 
 1. ~~Reconcile the South Korea DART and Australia/Switzerland subagent work
-   into `main`~~ - done. Both rebased cleanly onto current `main`, full test
-   suite and ruff pass. DART still needs live verification against a real
-   `DART_API_KEY`.
-2. ~~Add Turkey~~ - done. Live-verified end-to-end this pass.
-3. Research-verify Indonesia and Thailand at the API layer, then add.
-   Re-research Chile with live-network form/endpoint inspection (the
-   direct-network path was unavailable this pass) before deciding whether
-   to build it.
-4. Generalize the UK category-filter pattern to surface non-financial
-   disclosure types already present in existing feeds (NSM, ESEF, CVM, NSE) -
-   this is the cheapest step toward EdgarTools' insider/ownership/current-report
-   parity and touches zero new markets.
-5. Only then take on new insider-trading/shareholding adapters per market,
-   ESEF's 13 national OAMs being the largest remaining lift.
+   into `main`~~ - done.
+2. ~~Add Turkey~~ - done. Live-verified end-to-end.
+3. ~~Generalize the category-filter pattern and add insider-trading/
+   major-shareholding coverage for UK NSM, India NSE, and Brazil CVM~~ -
+   done. Live-verified end-to-end on all three; Singapore SGX hit a genuine
+   access-control block and was left unshipped rather than pushed through.
+4. Indonesia, Thailand, and Chile are on hold, not needed right now -
+   revisit with live-network reconnaissance when they matter again.
+5. `category="current_report"`/`"proxy"` for NSM/NSE/CVM - the cheapest
+   remaining EdgarTools-parity step, since it only needs a type-code
+   allowlist per source, no new HTTP calls.
+6. ESEF's 13 national OAMs for insider/major-shareholding, and
+   Mexico/Peru/Colombia/Canada/Japan research for the same - largest
+   remaining lift, lowest priority.

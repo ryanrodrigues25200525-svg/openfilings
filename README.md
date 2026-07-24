@@ -36,6 +36,9 @@ source documents into Markdown for LLMs.
 - List KAP quarterly, semiannual, and annual "Finansal Rapor" filings and
   read their IFRS-tagged financial statements directly from KAP's own
   rendered viewer tables, skipping PDF parsing entirely
+- List director/PDMR dealing notifications (`category="insider"`) and major-
+  shareholding notifications (`category="major_holdings"`) for UK FCA NSM,
+  India NSE, and Brazil CVM, alongside financial-statement filings
 - Resolve listed-company names to legal entity identifiers (LEIs)
 - List regulated disclosures in one timeline
 - Download public PDF, HTML/XHTML, and tagged-report ZIP documents
@@ -507,6 +510,17 @@ The Brazil connector uses the official keyless CVM
 [IPE filing archive](https://dados.cvm.gov.br/dataset/cia_aberta-doc-ipe). It
 filters the register to active operational issuers whose market type is
 `BOLSA`; document links remain on CVM's public RAD system.
+
+UK FCA NSM, India NSE, and Brazil CVM support `category="insider"`
+(director/PDMR dealing notifications) and `category="major_holdings"`
+(substantial-shareholding notifications) alongside `category="accounts"`.
+NSM maps these to existing NSM type codes (`DSH`/`HOL`) on the same feed
+already used for accounts. NSE calls SEBI's PIT and shareholding-pattern
+endpoints directly, each returning a real downloadable XBRL document. CVM
+reads its own yearly VLMO Open Data archive (CVM Instrução 358 art. 11) -
+the same row shape as the IPE archive, just a different yearly ZIP - which
+combines insider trading and holdings into one filing, so both are covered
+by `category="insider"` alone.
 
 The Singapore connector uses SGX's official keyless
 [corporate-information page](https://www.sgx.com/securities/corporate-information),

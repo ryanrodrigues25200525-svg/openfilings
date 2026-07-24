@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections import Counter
 
 import httpx
@@ -49,6 +50,35 @@ async def test_fca_pipeline_uses_compressed_content_cache(tmp_path) -> None:
     assert {filing.source for filing in filings} == {"fca_nsm"}
     assert "## Trading update" in first.markdown
     assert calls["/artefacts/NSM/RNS/disclosure-123.html"] == 1
+
+
+@pytest.mark.asyncio
+async def test_nsm_insider_and_major_holdings_categories_map_to_type_codes(
+    tmp_path,
+) -> None:
+    payloads: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            payloads.append(json.loads(request.content))
+            return httpx.Response(200, json=_nsm_search_response())
+        raise AssertionError(f"Unexpected request: {request.url}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        nsm = FcaNsmClient(client=http_client)
+        cache = SQLiteCache(tmp_path / "cache.sqlite3")
+        service = OpenFilingsService(cache, nsm_source=nsm)
+
+        await service.list_filings("uk_lei_2138002P5RNKC5W2JZ46", category="insider")
+        await service.list_filings(
+            "uk_lei_2138002P5RNKC5W2JZ46", category="major_holdings"
+        )
+        cache.close()
+
+    insider_criteria = payloads[-2]["criteriaObj"]["criteria"]
+    major_holdings_criteria = payloads[-1]["criteriaObj"]["criteria"]
+    assert {"name": "type_code", "value": ["dsh"]} in insider_criteria
+    assert {"name": "type_code", "value": ["hol"]} in major_holdings_criteria
 
 
 @pytest.mark.asyncio

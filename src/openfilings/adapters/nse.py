@@ -29,6 +29,10 @@ INTEGRATED_FILING_LANDING_URL = (
     "https://www.nseindia.com/companies-listing/corporate-integrated-filing"
 )
 INTEGRATED_FILING_URL = "https://www.nseindia.com/api/integrated-filing-results"
+# SEBI PIT (Prohibition of Insider Trading) Regulation 7(2) disclosures.
+PIT_URL = "https://www.nseindia.com/api/corporates-pit"
+# SEBI (LODR) Regulation 31 periodic shareholding-pattern disclosures.
+SHAREHOLDING_URL = "https://www.nseindia.com/api/corporate-share-holdings-master"
 
 _ALLOWED_SERIES = {"EQ", "BE", "BZ"}
 _ARCHIVE_HOST = "nsearchives.nseindia.com"
@@ -93,6 +97,11 @@ class NseClient(RetryingClient):
         )
         if company is None:
             raise SourceError(f"NSE symbol {symbol} is not an active listed equity.")
+        if category == "insider":
+            return await self._pit_filings(company, limit=limit)
+        if category == "major_holdings":
+            return await self._shareholding_filings(company, limit=limit)
+
         await self._prepare_session()
         response = await self._request(
             "GET",
@@ -115,6 +124,62 @@ class NseClient(RetryingClient):
             filing
             for row in rows
             if (filing := self._filing_from_row(company, row)) is not None
+        ]
+        filings.sort(key=lambda filing: filing.published_at, reverse=True)
+        return filings[: max(1, limit)]
+
+    async def _pit_filings(self, company: Company, *, limit: int) -> list[Filing]:
+        await self._prepare_session()
+        response = await self._request(
+            "GET",
+            PIT_URL,
+            params={"index": "equities", "symbol": company.ticker},
+            headers={
+                "Referer": LANDING_URL,
+                "Accept": "application/json,text/plain,*/*",
+            },
+        )
+        try:
+            rows = response.json().get("data", [])
+        except (ValueError, AttributeError) as exc:
+            raise SourceError(
+                "NSE returned an invalid insider-trading response."
+            ) from exc
+        if not isinstance(rows, list):
+            raise SourceError("NSE returned an invalid insider-trading response.")
+        filings = [
+            filing
+            for row in rows
+            if (filing := self._pit_filing_from_row(company, row)) is not None
+        ]
+        filings.sort(key=lambda filing: filing.published_at, reverse=True)
+        return filings[: max(1, limit)]
+
+    async def _shareholding_filings(
+        self, company: Company, *, limit: int
+    ) -> list[Filing]:
+        await self._prepare_session()
+        response = await self._request(
+            "GET",
+            SHAREHOLDING_URL,
+            params={"index": "equities", "symbol": company.ticker},
+            headers={
+                "Referer": LANDING_URL,
+                "Accept": "application/json,text/plain,*/*",
+            },
+        )
+        try:
+            rows = response.json()
+        except ValueError as exc:
+            raise SourceError(
+                "NSE returned an invalid shareholding-pattern response."
+            ) from exc
+        if not isinstance(rows, list):
+            raise SourceError("NSE returned an invalid shareholding-pattern response.")
+        filings = [
+            filing
+            for row in rows
+            if (filing := self._shareholding_filing_from_row(company, row)) is not None
         ]
         filings.sort(key=lambda filing: filing.published_at, reverse=True)
         return filings[: max(1, limit)]
@@ -218,8 +283,7 @@ class NseClient(RetryingClient):
             return None
         candidates.sort(
             key=lambda row: (
-                str(row.get("consolidated", "")).strip().casefold()
-                == "consolidated",
+                str(row.get("consolidated", "")).strip().casefold() == "consolidated",
                 str(row.get("audited", "")).strip().casefold() == "audited",
             ),
             reverse=True,
@@ -230,20 +294,27 @@ class NseClient(RetryingClient):
         return value.casefold().startswith("in_nse_")
 
     def matches_filing_id(self, value: str) -> bool:
-        return value.casefold().startswith("in_nse_filing_")
+        return value.casefold().startswith(
+            ("in_nse_filing_", "in_nse_pit_", "in_nse_shp_")
+        )
 
     @staticmethod
     def document_url(value: str) -> str:
         url = value.strip()
         parsed = urlparse(url)
+        path = parsed.path
+        path_lower = path.casefold()
+        safe = (
+            path.startswith("/annual_reports/")
+            and path_lower.endswith((".pdf", ".zip"))
+        ) or (path.startswith("/corporate/xbrl/") and path_lower.endswith(".xml"))
         if (
             parsed.scheme != "https"
             or parsed.netloc.casefold() != _ARCHIVE_HOST
-            or not parsed.path.startswith("/annual_reports/")
-            or ".." in parsed.path
-            or not parsed.path.casefold().endswith((".pdf", ".zip"))
+            or ".." in path
+            or not safe
         ):
-            raise DocumentUnavailableError("Unsafe NSE annual-report URL.")
+            raise DocumentUnavailableError("Unsafe NSE document URL.")
         return url
 
     async def _prepare_session(self) -> None:
@@ -342,10 +413,110 @@ class NseClient(RetryingClient):
             source_url=source_url,
         )
 
+    def _pit_filing_from_row(self, company: Company, row: object) -> Filing | None:
+        if not isinstance(row, dict):
+            return None
+        did = str(row.get("did", "")).strip()
+        if not did.isdigit():
+            return None
+        broadcast = self._parse_timestamp_minutes(str(row.get("date", "")))
+        if broadcast is None:
+            return None
+        document_id = self._optional_document_url(row.get("xbrl"))
+        acquirer = str(row.get("acqName", "")).strip() or "Unknown person"
+        direction = str(row.get("tdpTransactionType", "")).strip() or "Transaction"
+        quantity = str(row.get("secAcq", "")).strip()
+        title = f"{direction} by {acquirer}" + (
+            f" ({quantity} shares)" if quantity else ""
+        )
+        return Filing(
+            id=f"in_nse_pit_{did}",
+            company_id=company.id,
+            source="nse",
+            source_id=did,
+            title=title,
+            category="insider",
+            filing_type="insider",
+            filing_date=broadcast.date(),
+            published_at=broadcast,
+            document_id=document_id,
+            media_type="application/xml" if document_id else None,
+            issuer_name=company.name,
+            language="en",
+            xbrl_available=document_id is not None,
+            source_url=document_id or LANDING_URL,
+        )
+
+    def _shareholding_filing_from_row(
+        self, company: Company, row: object
+    ) -> Filing | None:
+        if not isinstance(row, dict):
+            return None
+        record_id = str(row.get("recordId", "")).strip()
+        if not record_id.isdigit():
+            return None
+        broadcast = self._parse_timestamp(str(row.get("broadcastDate", "")))
+        if broadcast is None:
+            return None
+        period_end = self._parse_nse_date(str(row.get("date", "")))
+        document_id = self._optional_document_url(row.get("xbrl"))
+        promoter_pct = str(row.get("pr_and_prgrp", "")).strip()
+        title = (
+            f"Shareholding pattern as of {period_end.isoformat()}"
+            if period_end
+            else "Shareholding pattern"
+        )
+        return Filing(
+            id=f"in_nse_shp_{record_id}",
+            company_id=company.id,
+            source="nse",
+            source_id=record_id,
+            title=title,
+            category="major_holdings",
+            filing_type="major_holdings",
+            filing_date=broadcast.date(),
+            published_at=broadcast,
+            period_end=period_end,
+            description=(
+                f"Promoter and promoter group holding: {promoter_pct}%"
+                if promoter_pct
+                else None
+            ),
+            document_id=document_id,
+            media_type="application/xml" if document_id else None,
+            issuer_name=company.name,
+            language="en",
+            xbrl_available=document_id is not None,
+            source_url=document_id or LANDING_URL,
+        )
+
+    def _optional_document_url(self, value: object) -> str | None:
+        url = str(value or "").strip()
+        if not url:
+            return None
+        try:
+            return self.document_url(url)
+        except DocumentUnavailableError:
+            return None
+
     @staticmethod
     def _parse_timestamp(value: str) -> datetime | None:
         try:
             return datetime.strptime(value, "%d-%b-%Y %H:%M:%S").replace(tzinfo=UTC)
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _parse_timestamp_minutes(value: str) -> datetime | None:
+        try:
+            return datetime.strptime(value, "%d-%b-%Y %H:%M").replace(tzinfo=UTC)
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _parse_nse_date(value: str) -> date | None:
+        try:
+            return datetime.strptime(value, "%d-%b-%Y").date()
         except ValueError:
             return None
 

@@ -164,6 +164,76 @@ async def test_nse_search_filings_and_download_are_indian_equities() -> None:
     assert document.media_type == "application/pdf"
 
 
+@pytest.mark.asyncio
+async def test_nse_insider_and_major_holdings_categories() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("corporate-filings-annual-reports"):
+            return httpx.Response(200, text="<html></html>")
+        if request.url.path.endswith("EQUITY_L.csv"):
+            return httpx.Response(
+                200,
+                content=(
+                    b"SYMBOL,NAME OF COMPANY,SERIES,ISIN NUMBER\n"
+                    b"RELIANCE,Reliance Industries Limited,EQ,INE002A01018\n"
+                ),
+            )
+        if request.url.path == "/api/corporates-pit":
+            assert request.url.params["symbol"] == "RELIANCE"
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "did": "563850",
+                            "acqName": "BALANADU NARAYAN",
+                            "tdpTransactionType": "Sell",
+                            "secAcq": "2320",
+                            "date": "18-Feb-2026 19:06",
+                            "xbrl": (
+                                "https://nsearchives.nseindia.com/corporate/xbrl/"
+                                "IT_1194033_1627626_18022026070637_WEB.xml"
+                            ),
+                        }
+                    ]
+                },
+            )
+        if request.url.path == "/api/corporate-share-holdings-master":
+            assert request.url.params["symbol"] == "RELIANCE"
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "recordId": "211570",
+                        "date": "30-JUN-2026",
+                        "broadcastDate": "16-JUL-2026 19:24:44",
+                        "pr_and_prgrp": "50.48",
+                        "xbrl": (
+                            "https://nsearchives.nseindia.com/corporate/xbrl/"
+                            "SHP_1694620_16072026072434_WEB.xml"
+                        ),
+                    }
+                ],
+            )
+        raise AssertionError(f"Unexpected NSE request: {request.url}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = NseClient(client=http)
+        companies = await client.search_companies("RELIANCE")
+        insider = await client.list_filings(companies[0].id, category="insider")
+        holdings = await client.list_filings(companies[0].id, category="major_holdings")
+
+    assert [filing.id for filing in insider] == ["in_nse_pit_563850"]
+    assert insider[0].category == "insider"
+    assert insider[0].title == "Sell by BALANADU NARAYAN (2320 shares)"
+    assert insider[0].document_id == (
+        "https://nsearchives.nseindia.com/corporate/xbrl/"
+        "IT_1194033_1627626_18022026070637_WEB.xml"
+    )
+
+    assert [filing.id for filing in holdings] == ["in_nse_shp_211570"]
+    assert holdings[0].category == "major_holdings"
+    assert holdings[0].period_end == date(2026, 6, 30)
+    assert "50.48%" in (holdings[0].description or "")
 
 
 @pytest.mark.asyncio

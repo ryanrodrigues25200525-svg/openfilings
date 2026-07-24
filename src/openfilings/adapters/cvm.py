@@ -119,10 +119,15 @@ class CvmClient:
             raise SourceError(
                 f"CVM code {code} is not an active Brazilian exchange-listed issuer."
             )
+        # Insider trading and shareholding are one combined disclosure under
+        # CVM Instrucao 358 art. 11 ("Valores Mobiliarios Negociados e
+        # Detidos"), published as its own yearly Open Data archive - not
+        # part of the general IPE archive the other categories come from.
+        row_source = self._vlmo_rows if category == "insider" else self._ipe_rows
         filings: dict[str, Filing] = {}
         current_year = self._today().year
         for year in range(current_year, current_year - self._history_years, -1):
-            for row in await self._ipe_rows(year):
+            for row in await row_source(year):
                 if self._format_cvm_code(row.get("Codigo_CVM", "")) != code:
                     continue
                 filing = self._filing_from_row(row, category=category)
@@ -272,6 +277,38 @@ class CvmClient:
         except (zipfile.BadZipFile, RuntimeError) as exc:
             raise SourceError(f"The CVM IPE archive for {year} is invalid.") from exc
 
+    async def _vlmo_rows(self, year: int) -> list[dict[str, str]]:
+        """Per-issuer "Valores Mobiliarios Negociados e Detidos" (insider
+        trading and holdings, CVM Instrucao 358 art. 11) filing index for
+        one year - same row shape as the IPE archive, fetched from its own
+        yearly Open Data archive instead."""
+
+        archive = await self.structured_archive("vlmo", year)
+        if archive is None:
+            return []
+        try:
+            with zipfile.ZipFile(io.BytesIO(archive)) as zip_archive:
+                members = [
+                    member
+                    for member in zip_archive.infolist()
+                    if not member.is_dir()
+                    and member.filename.casefold().endswith(".csv")
+                    and "_con_" not in member.filename.casefold()
+                ]
+                if len(members) != 1:
+                    raise SourceError(
+                        f"The CVM VLMO archive for {year} has unexpected contents."
+                    )
+                member = members[0]
+                if member.file_size > _MAX_ARCHIVE_EXPANDED_BYTES:
+                    raise SourceError(
+                        f"The CVM VLMO archive for {year} expands beyond the safe "
+                        "limit."
+                    )
+                return self._csv_rows(zip_archive.read(member))
+        except (zipfile.BadZipFile, RuntimeError) as exc:
+            raise SourceError(f"The CVM VLMO archive for {year} is invalid.") from exc
+
     def _company_from_row(self, row: dict[str, str]) -> Company | None:
         if (
             self._normalize_search(row.get("SIT", "")) != "ativo"
@@ -317,17 +354,23 @@ class CvmClient:
         source_type = row.get("Tipo", "").strip()
         normalized_type = self._normalize_search(source_type)
         filing_type = _FINANCIAL_TYPES.get(normalized_type)
+        is_insider = category is not None and category.casefold() == "insider"
         if category and category.casefold() == "accounts" and filing_type is None:
             return None
         if (
             category
             and category.casefold() != "accounts"
+            and not is_insider
             and self._normalize_search(category)
             != self._normalize_search(source_category)
         ):
             return None
         if filing_type is None:
-            filing_type = self._slug(source_type or source_category or "document")
+            filing_type = (
+                "insider"
+                if is_insider
+                else self._slug(source_type or source_category or "document")
+            )
 
         code = self._format_cvm_code(row.get("Codigo_CVM", ""))
         source_url = row.get("Link_Download", "").strip()
@@ -355,9 +398,13 @@ class CvmClient:
             source="cvm",
             source_id=sequence,
             title=title,
-            category="accounts"
-            if normalized_type in _FINANCIAL_TYPES
-            else self._slug(source_category),
+            category=(
+                "accounts"
+                if normalized_type in _FINANCIAL_TYPES
+                else "insider"
+                if is_insider
+                else self._slug(source_category)
+            ),
             filing_type=filing_type,
             filing_date=filed_on,
             published_at=self._date_time(filed_on),
