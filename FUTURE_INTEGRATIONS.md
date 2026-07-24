@@ -50,7 +50,8 @@ the file layer.
 - **Qatar** - no public disclosure API or XBRL program found this pass; only market-news coverage. Not a lead.
 - **Egypt** - dead end: EGX's disclosure/reports pages are behind a CAPTCHA bot-check (a hard blocker per this project's own rules against bypassing bot detection), and EGX only announced its XBRL rollout for 2025 - too immature even if the CAPTCHA weren't disqualifying on its own.
 - **Australia, Switzerland** - a dedicated subagent researched and began building these; its worktree/branch (`agent-a70c89f4cfadcca12`) had not yet reported completion as of this writing. Check its output before re-researching from scratch.
-- **South Korea (DART)** - already built by a subagent this session (adapter, structured extraction, tests - commit `8ce7bdc` in worktree `agent-a04b85a732487f085`), but **not yet reconciled into `main`** and not live-verified (the agent had no API key available). Reconcile using the same file-by-file cherry-pick-vs-manual-reapply process used for the Tier 0 ESEF worktree, then live-verify against a real DART key before counting it as shipped.
+- **South Korea (DART)** - reconciled into `main` (rebased cleanly, all tests pass). Still not live-verified - no `DART_API_KEY` was available when built or reconciled. Live-verify against a real key before counting it as shipped.
+- **Australia (ASX)** - reconciled into `main` (rebased cleanly, all tests pass, includes live-verified BHP/AQC extraction from the subagent's own session).
 - **Germany** - not enabled; upstream `filings.xbrl.org` currently lists German filings as unavailable for reliable discovery (documented in `README.md` already, not a new finding).
 
 ## 2. EdgarTools feature parity beyond filings + financials
@@ -117,8 +118,10 @@ adapters.
 
 ## Suggested sequencing
 
-1. Reconcile the South Korea DART and Australia/Switzerland subagent work
-   into `main` (unblocks nothing else, but has been sitting unmerged).
+1. ~~Reconcile the South Korea DART and Australia/Switzerland subagent work
+   into `main`~~ - done. Both rebased cleanly onto current `main`, full test
+   suite and ruff pass. DART still needs live verification against a real
+   `DART_API_KEY`.
 2. Add Turkey and Chile (Tier A, highest confidence).
 3. Research-verify Indonesia and Thailand at the API layer, then add.
 4. Generalize the UK category-filter pattern to surface non-financial
