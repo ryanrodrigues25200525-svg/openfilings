@@ -61,7 +61,7 @@ blanket "add everything everywhere" plan.
 | EdgarTools feature | SEC data it reads | Non-US equivalent concept | Status |
 |---|---|---|---|
 | Insider transactions | Forms 3/4/5 | Director/PDMR dealing notifications (EU MAR Art. 19, UK PDMR rules, India SEBI PIT) | **Shipped**: UK FCA NSM (`category="insider"` → NSM type code `DSH`), India NSE (`category="insider"` → SEBI PIT Regulation 7(2) disclosures, `/api/corporates-pit`), Brazil CVM (`category="insider"` → the yearly VLMO Open Data archive, CVM Instrução 358 art. 11). Live-verified against real companies on all three. Singapore SGX not shipped - see below |
-| Institutional ownership / major shareholding | 13F-HR holdings reports | Major/substantial shareholding notifications (EU Transparency Directive, UK DTR5, India shareholding pattern) | **Shipped**: UK FCA NSM (`category="major_holdings"` → NSM type code `HOL`), India NSE (`category="major_holdings"` → periodic SEBI (LODR) Regulation 31 shareholding pattern, `/api/corporate-share-holdings-master`, includes a real downloadable XBRL document per filing). Brazil's VLMO combines this with insider trading in one filing, so it's covered by `category="insider"` there, not a separate category. **13F-style reverse lookup also shipped for UK NSM only** (`search_major_holders()`) - see below for the honest scope of that |
+| Institutional ownership / major shareholding | 13F-HR holdings reports | Major/substantial shareholding notifications (EU Transparency Directive, UK DTR5, India shareholding pattern) | **Shipped** (issuer-side "who owns >5% of this company"): UK FCA NSM (`category="major_holdings"` → NSM type code `HOL`), India NSE (`category="major_holdings"` → periodic SEBI (LODR) Regulation 31 shareholding pattern, `/api/corporate-share-holdings-master`, includes a real downloadable XBRL document per filing). Brazil's VLMO combines this with insider trading in one filing, so it's covered by `category="insider"` there, not a separate category. A bounded 13F-style *reverse* lookup (`search_major_holders()`) also shipped for UK NSM only - see below. **Deliberately not being expanded further - see "13F-style institutional-holdings scope decision" below** |
 | Full-text filing search | EDGAR full-text search | A keyword search across every issuer's disclosures, not one company at a time | **Shipped** for UK FCA NSM (`headline` criterion - NSM's own top-level `keyword` field is a confirmed no-op) and Brazil CVM (the yearly IPE archive already covers every issuer, filtered client-side by subject/type). `search_disclosures()`. Not attempted for other sources this pass |
 | Company facts (multi-period) | `get_facts()` / XBRL company-concept time series | A multi-year view of one line item across a company's whole filing history, not one filing's statements | **Shipped**, and market-agnostic: `get_company_facts()` is pure composition over `list_filings()` + `get_filing_financials()`, merging newest-filing-wins per period. Works for every market with structured or PDF-derived financials already - no adapter changes were needed |
 | Current reports | 8-K | Ad-hoc/regulatory news disclosures (UK RNS, EU ad-hoc disclosure, most exchanges' "material information" feed) | Not built. `filings()` already returns every disclosure type these feeds carry when `category` isn't `"accounts"`/`"insider"`/`"major_holdings"` - callers can filter client-side on `Filing.category`/`Filing.filing_type` today. A dedicated `category="current_report"` mapping per source (an explicit type-code allowlist, e.g. NSM's `UPD`/`ACQ`/`DIS`/`TST`/`BOA`) is a smaller, well-scoped follow-up, not attempted this pass |
@@ -137,6 +137,72 @@ disclosure type too, just not yet given their own named category. Building
 that out is a smaller, separate follow-up (see the table above), not part
 of this pass.
 
+### 13F-style institutional-holdings scope decision
+
+**Decision: out of scope, not a backlog item.** A general "13F for every
+market" capability was considered and explicitly rejected after live
+research, not just deprioritized for lack of time:
+
+- **13F is a US SEC-specific concept EdgarTools already owns.** It's an
+  *investor-side* filing - the institutional investor discloses its whole
+  portfolio. OpenFilings' own stated scope is "EdgarTools, but for non-US
+  markets" (`GOAL.md`); anyone who wants US 13F data uses EdgarTools
+  directly. There is no gap to fill on the US side.
+- **No general non-US equivalent exists to build against.** Confirmed via
+  research, not assumed: the EU has no Article-13(f)-style rule at all -
+  European institutional investors and hedge funds are not required to
+  publicly disclose their portfolios (legal-scholarship sources confirm
+  this is a deliberate regulatory choice, not an omission). Most other
+  markets this project covers follow the same issuer-side-only pattern
+  (major-shareholder disclosure, not investor-portfolio disclosure).
+- **The two real leads found are narrow, single-purpose, and not worth
+  building on their own:**
+  - **Norway's Norges Bank Investment Management (GPFG)** publishes its
+    entire portfolio holdings publicly - genuinely more transparent than
+    a 13F. But it's one specific fund, not a repeatable "13F for market
+    X" pattern; building it would be a one-off connector for a single
+    filer, not a feature that generalizes.
+  - **New Zealand's Disclose Register** (companiesoffice.govt.nz) is a
+    real, structured, keyless public register of managed-fund portfolio
+    holdings via documented CSV/XLSX templates. Scoped to NZ-registered
+    funds only - real, but narrow.
+- **UK's `search_major_holders()` (already shipped) is being kept as-is,
+  not expanded.** It's the one place a plausible (bounded, scan-based)
+  signal exists, and it cost nothing extra to build on top of the TR-1
+  parser already needed for `list_major_holders()`. That's a reasonable
+  stopping point, not a foundation to generalize to other markets - NSM's
+  search index still doesn't carry holder identity, so every additional
+  market would need its own from-scratch document-body parser for a
+  feature with this narrow a payoff.
+
+If a specific, concrete reason comes up later to want Norges Bank's or
+NZ's data specifically, revisit then - but don't chase general "13F for
+market X" as an open item.
+
+### Other confirmed hard ceilings (verified live this pass, not assumptions)
+
+- **Canada (SEDAR+)** - not "no API found." The real endpoint 302-redirects
+  straight into Radware/ShieldSquare bot-challenge infrastructure
+  (`validate.perfdrive.com`, querystring-referencing
+  `support@shieldsquare.com`). A deliberate, actively enforced wall.
+  Per this project's own rule against bypassing bot detection, this is
+  permanently out of reach for a keyless approach - not a research gap.
+- **Singapore SGX's insider/shareholding data** - the free JSON endpoint a
+  2019 third-party writeup documented has since been locked down (that's
+  the `403 ForbiddenException` already on record). SGX's own official
+  Market Data Policy confirms the structured alternative (`SGXNews-XML`)
+  is an explicitly paid "Non-Price Feed" product. They didn't fail to
+  build a free option - they built one, then closed it.
+- **UK's "real" structured feed (LSE's RNS Data Feed) is paid, and
+  wouldn't even solve the problem.** It's a genuine REST + WebSocket API
+  (NewsML-G2 XML) - but it requires a signed licence agreement costing
+  **£6,000+/year** plus per-device data charges, and the disclosure body
+  inside it is still free-text HTML. Paying for it would only save the
+  category-tagging step already done for free; it would not add
+  structured holder-name/position fields. Not worth pursuing even with a
+  budget, and inconsistent with the project's own keyless-first design
+  goal regardless.
+
 ## Suggested sequencing
 
 1. ~~Reconcile the South Korea DART and Australia/Switzerland subagent work
@@ -153,11 +219,19 @@ of this pass.
    `search_major_holders()` (NSM only - the only source where the holder's
    identity is even extractable, and only as a bounded scan, not a real
    index).
-5. Indonesia, Thailand, and Chile are on hold, not needed right now -
+5. ~~Research whether Canada (SEDAR+), Singapore (SGX), and the UK's "real"
+   structured feed were genuine ceilings or just under-researched, and
+   whether a non-US 13F equivalent exists anywhere~~ - done. All three
+   ceilings confirmed real and permanent (see "Other confirmed hard
+   ceilings" above); no general non-US 13F equivalent exists anywhere,
+   and the two narrow leads found (Norway GPFG, NZ Disclose Register)
+   were deliberately not pursued (see "13F-style institutional-holdings
+   scope decision" above).
+6. Indonesia, Thailand, and Chile are on hold, not needed right now -
    revisit with live-network reconnaissance when they matter again.
-6. `category="current_report"`/`"proxy"` for NSM/NSE/CVM - the cheapest
+7. `category="current_report"`/`"proxy"` for NSM/NSE/CVM - the cheapest
    remaining EdgarTools-parity step, since it only needs a type-code
    allowlist per source, no new HTTP calls.
-7. ESEF's 13 national OAMs for insider/major-shareholding, and
+8. ESEF's 13 national OAMs for insider/major-shareholding, and
    Mexico/Peru/Colombia/Canada/Japan research for the same - largest
    remaining lift, lowest priority.
