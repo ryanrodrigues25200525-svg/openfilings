@@ -9,6 +9,7 @@ from collections.abc import Callable, Coroutine
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, TypeVar, cast
 
+from openfilings.adapters.asx import AsxClient
 from openfilings.adapters.base import PublicMarketClient, SourceDocument
 from openfilings.adapters.bmv import BmvClient
 from openfilings.adapters.cvm import CvmClient
@@ -171,6 +172,10 @@ class OpenFilingsService:
                 max_retries=settings.max_retries,
             ),
             SfcClient(
+                timeout_seconds=settings.request_timeout_seconds,
+                max_retries=settings.max_retries,
+            ),
+            AsxClient(
                 timeout_seconds=settings.request_timeout_seconds,
                 max_retries=settings.max_retries,
             ),
@@ -1287,7 +1292,7 @@ class OpenFilingsService:
         if normalized not in supported:
             source_names = (
                 "all, fca_nsm, edinet, esef, cvm, sgx, bmv, nse, sedar, smv, "
-                "sfc, dart"
+                "sfc, dart, asx"
             )
             raise ConfigurationError(f"Source must be one of: {source_names}.")
         return cast(SourceSelection, normalized)

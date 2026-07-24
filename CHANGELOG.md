@@ -50,6 +50,14 @@ All notable changes to OpenFilings are documented in this file.
   against DART's documented request/response shapes and verified with
   mocked-response tests only; no live API key was available in this
   session, so no live company or financial data has been verified.
+- Added a keyless ASX listed-company and financial-report adapter for
+  Australia. ASX exposes no company-scoped filing API and ASIC's lodged
+  financial reports are a paid-download product, so discovery pages ASX's
+  public global announcements feed backward in time and keeps only the rows
+  for the requested issuer code, feeding the existing heuristic PDF-statement
+  extractor. Switzerland was investigated and not added: SIX's data APIs are
+  commercial, and ad hoc disclosures are pushed to each issuer's own website
+  with no central free index or predictable document host to build against.
 
 ### Fixed
 

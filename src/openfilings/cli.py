@@ -48,6 +48,7 @@ class SourceOption(StrEnum):
     smv = "smv"
     sfc = "sfc"
     dart = "dart"
+    asx = "asx"
 
 
 class OcrOption(StrEnum):
