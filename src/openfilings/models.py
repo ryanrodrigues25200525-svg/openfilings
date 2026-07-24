@@ -26,6 +26,7 @@ SourceName = Literal[
     "sfc",
     "dart",
     "asx",
+    "kap",
 ]
 SourceSelection = Literal[
     "all",
@@ -41,6 +42,7 @@ SourceSelection = Literal[
     "sfc",
     "dart",
     "asx",
+    "kap",
 ]
 SUPPORTED_SOURCE_NAMES = frozenset(
     {
@@ -56,6 +58,7 @@ SUPPORTED_SOURCE_NAMES = frozenset(
         "asx",
         "sfc",
         "dart",
+        "kap",
     }
 )
 MarketCode = Annotated[str, Field(pattern=r"^[A-Z]{2}$")]

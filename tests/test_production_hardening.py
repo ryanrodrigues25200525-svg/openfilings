@@ -21,6 +21,7 @@ def test_keyless_smoke_matrix_covers_every_enabled_source() -> None:
         "sfc",
         "sedar",
         "edinet",
+        "kap",
     }
     assert all(case.query and case.label for case in SMOKE_CASES)
     # SEDAR+ and EDINET have no keyless filing-search API (SEDAR+ blocks

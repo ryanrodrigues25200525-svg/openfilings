@@ -16,6 +16,7 @@ from openfilings.adapters.esef import (
     EsefClient,
     EsefMarket,
 )
+from openfilings.adapters.kap import KapClient
 from openfilings.adapters.nse import NseClient
 from openfilings.adapters.sedar import SedarClient
 from openfilings.adapters.sfc import SfcClient
@@ -37,6 +38,7 @@ __all__ = [
     "EdinetClient",
     "EsefClient",
     "EsefMarket",
+    "KapClient",
     "NseClient",
     "SedarClient",
     "SfcClient",

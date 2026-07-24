@@ -58,6 +58,16 @@ All notable changes to OpenFilings are documented in this file.
   extractor. Switzerland was investigated and not added: SIX's data APIs are
   commercial, and ad hoc disclosures are pushed to each issuer's own website
   with no central free index or predictable document host to build against.
+- Added a keyless Turkey connector for KAP (the Public Disclosure Platform):
+  company search and disclosure listing use KAP's own public website
+  endpoints (not the paid, contract-gated Rest API data-distribution
+  product). "Finansal Rapor" financial-report disclosures are read directly
+  from KAP's rendered XBRL-viewer tables - each row carries the filer's
+  literal IFRS-tagged concept next to its value, so the existing IFRS
+  concept mapping applies with no Turkey-specific aliasing, and PDF parsing
+  is skipped entirely. Live-verified end-to-end (search, filings,
+  financials, balance-sheet identity) against Deniz Gayrimenkul GYO,
+  Turkcell, and BIM.
 
 ### Fixed
 

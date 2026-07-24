@@ -17,6 +17,7 @@ from openfilings.adapters.dart import REPORT_CODE_PERIOD, DartClient
 from openfilings.adapters.edinet import EdinetClient
 from openfilings.adapters.esef import ENABLED_ESEF_MARKETS, EsefClient
 from openfilings.adapters.fca_nsm import FcaNsmClient
+from openfilings.adapters.kap import KapClient
 from openfilings.adapters.nse import NseClient
 from openfilings.adapters.sedar import (
     SedarClient,
@@ -66,6 +67,7 @@ from openfilings.xbrl import extract_filing_financials
 from openfilings.xbrl.cvm_structured import extract_cvm_structured_financials
 from openfilings.xbrl.dart_structured import extract_dart_structured_financials
 from openfilings.xbrl.extract import extract_nse_integrated_filing_financials
+from openfilings.xbrl.kap_structured import extract_kap_structured_financials
 from openfilings.xbrl.pdf_statements import extract_pdf_ocr_financials
 from openfilings.xbrl.sfc_cuif_structured import extract_sfc_cuif_balance_sheet
 
@@ -176,6 +178,10 @@ class OpenFilingsService:
                 max_retries=settings.max_retries,
             ),
             AsxClient(
+                timeout_seconds=settings.request_timeout_seconds,
+                max_retries=settings.max_retries,
+            ),
+            KapClient(
                 timeout_seconds=settings.request_timeout_seconds,
                 max_retries=settings.max_retries,
             ),
@@ -727,6 +733,13 @@ class OpenFilingsService:
                 self._enforce_cache_limit()
                 return structured
 
+        if filing.source == "kap":
+            structured = await self._extract_kap_structured_financials(filing)
+            if structured is not None:
+                self._cache.put_financials(structured)
+                self._enforce_cache_limit()
+                return structured
+
         cuif_balance_sheet = (
             await self._extract_sfc_cuif_balance_sheet(filing)
             if filing.source == "sfc"
@@ -960,6 +973,34 @@ class OpenFilingsService:
                 source_url=source_url,
                 sha256=hashlib.sha256(
                     f"{filing.id}:{bsns_year}:{reprt_code}".encode()
+                ).hexdigest(),
+            )
+        except FinancialsUnavailableError:
+            return None
+
+    async def _extract_kap_structured_financials(
+        self, filing: Filing
+    ) -> FilingFinancials | None:
+        """Prefer KAP's rendered "Finansal Rapor" viewer tables over the
+        filing's PDF attachment - they carry the filer's literal IFRS-tagged
+        concepts, so they don't need heuristic PDF parsing at all. Falls
+        back to None (letting the caller use the PDF) if the disclosure
+        isn't a financial report or has no recognized IFRS facts."""
+
+        kap = self._market_sources_by_name.get("kap")
+        if not isinstance(kap, KapClient) or filing.filing_type != "financial_report":
+            return None
+        bodies = await kap.financial_report_bodies(filing.source_id)
+        if not bodies:
+            return None
+        source_url = filing.source_url
+        try:
+            return extract_kap_structured_financials(
+                bodies,
+                filing,
+                source_url=source_url,
+                sha256=hashlib.sha256(
+                    f"{filing.id}:{len(bodies)}".encode()
                 ).hexdigest(),
             )
         except FinancialsUnavailableError:
@@ -1292,7 +1333,7 @@ class OpenFilingsService:
         if normalized not in supported:
             source_names = (
                 "all, fca_nsm, edinet, esef, cvm, sgx, bmv, nse, sedar, smv, "
-                "sfc, dart, asx"
+                "sfc, dart, asx, kap"
             )
             raise ConfigurationError(f"Source must be one of: {source_names}.")
         return cast(SourceSelection, normalized)

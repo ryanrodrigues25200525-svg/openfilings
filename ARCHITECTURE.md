@@ -148,6 +148,9 @@ normalized models and follow the same service pipeline.
 | `SedarClient` | Canada | TSX/TSXV discovery and explicit SEDAR+ import |
 | `SmvClient` | Peru | SMV issuer and financial-statement data |
 | `SfcClient` | Colombia | SFC/SIMEV issuer and filing services |
+| `DartClient` | South Korea | OPENDART corp-code registry and filings; requires `DART_API_KEY` |
+| `AsxClient` | Australia | ASX public announcements feed |
+| `KapClient` | Turkey | KAP public disclosure feed and rendered XBRL-viewer tables |
 
 Adapters own source-specific URL construction, response parsing, identifier
 matching, exchange-product filtering, host allowlists, and download bounds.

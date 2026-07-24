@@ -17,15 +17,15 @@ real blocker was confirmed (paywall, no public API, discontinued access).
 
 | Market | Regulator/source | Format | Status |
 |---|---|---|---|
-| Turkey | KAP (Public Disclosure Platform) | XBRL | Documented strong in earlier research pass this session; not yet live-verified end-to-end |
-| Chile | CMF (Comisión para el Mercado Financiero) | XBRL | Documented strong in earlier research pass this session; not yet live-verified end-to-end |
-| Indonesia | IDX financial-statements portal | Inline XBRL + `instance.zip` per company/quarter | New this pass - static per-issuer download URLs (`idx.co.id/.../{TICKER}/instance.zip`), no login on the file endpoints themselves. Same shape as the ESEF/`filings.xbrl.org` pattern that has worked repeatedly. Needs one live pull to confirm the instance documents use standard IFRS concept names (if so, the existing tagged-XBRL pipeline reuses with near-zero new mapping code, same as India/NSE and South Korea/DART) |
-| Thailand | Thai SEC IDISC (`market.sec.or.th/public/idisc/`) | Raw filing ZIPs containing `FINANCIAL_STATEMENTS.XLS[X]` | New this pass - SET's own "SMART Marketplace" API is a paid subscription, but the underlying regulatory filings on SEC IDISC are the public disclosure record and appear directly downloadable (a third-party open dataset, `thaifin`, is built entirely from them with no auth). Needs confirmation that IDISC's own listing/search endpoints are keyless, not just the file host |
+| Chile | CMF (Comisión para el Mercado Financiero) | XBRL (filer-submission taxonomy) | Downgraded this pass. CMF's public "Consulta de Estados Financieros" query tool (`sa_fecu_index.php`) is a legacy PHP form dating to the pre-IFRS Chilean-GAAP "FECU" regime, not a JSON API - it needs real POST-form reconnaissance (form field names, result-page shape) to find any per-company download link, and the IFRS-era query tool (`w4-propertyvalue-46324.html`) rendered no static content to inspect. CMF's own XBRL system (SEIL) is a **filer submission channel**, not a public read/download API - no evidence found this pass that submitted instances are re-exposed for public download anywhere. `cmfchile.cl` was also unreachable from this session's direct network tooling (DNS SERVFAIL, an environment issue, not a site block) - live-network inspection (the same technique that found ASX's and KAP's hidden JSON endpoints) is needed before this can be ranked Tier A again, and no build should start without it |
+| Indonesia | IDX financial-statements portal | Inline XBRL + `instance.zip` per company/quarter | Static per-issuer download URLs (`idx.co.id/.../{TICKER}/instance.zip`), no login on the file endpoints themselves. Same shape as the ESEF/`filings.xbrl.org` pattern that has worked repeatedly. Needs one live pull to confirm the instance documents use standard IFRS concept names (if so, the existing tagged-XBRL pipeline reuses with near-zero new mapping code, same as India/NSE, South Korea/DART, and Turkey/KAP) |
+| Thailand | Thai SEC IDISC (`market.sec.or.th/public/idisc/`) | Raw filing ZIPs containing `FINANCIAL_STATEMENTS.XLS[X]` | SET's own "SMART Marketplace" API is a paid subscription, but the underlying regulatory filings on SEC IDISC are the public disclosure record and appear directly downloadable (a third-party open dataset, `thaifin`, is built entirely from them with no auth). Needs confirmation that IDISC's own listing/search endpoints are keyless, not just the file host |
 
-**Recommendation: add Turkey and Chile first** (highest confidence, already
-researched twice), **then spend one research/build cycle each on Indonesia
-and Thailand** to confirm the keyless path holds at the API layer, not just
-the file layer.
+**Turkey shipped this pass** (see "Deprioritized or dead end" below - it's
+no longer future work). **Recommendation: spend one research/build cycle
+each on Indonesia and Thailand** to confirm the keyless path holds at the
+API layer, not just the file layer; **re-research Chile with live-network
+tooling** before deciding whether to build it at all.
 
 ### Tier B - PDF-only ceiling, feasible but lower priority
 
@@ -52,6 +52,17 @@ the file layer.
 - **Australia, Switzerland** - a dedicated subagent researched and began building these; its worktree/branch (`agent-a70c89f4cfadcca12`) had not yet reported completion as of this writing. Check its output before re-researching from scratch.
 - **South Korea (DART)** - reconciled into `main` (rebased cleanly, all tests pass). Still not live-verified - no `DART_API_KEY` was available when built or reconciled. Live-verify against a real key before counting it as shipped.
 - **Australia (ASX)** - reconciled into `main` (rebased cleanly, all tests pass, includes live-verified BHP/AQC extraction from the subagent's own session).
+- **Turkey (KAP)** - shipped this pass. KAP's official Rest API data-distribution
+  product is paid/contract-gated (a Borsa İstanbul agreement is required), but
+  KAP's own public website (a Next.js SPA) is backed by plain, unauthenticated
+  JSON endpoints - no bot-detection bypass involved (confirmed live: no CAPTCHA,
+  no WAF challenge, plain 200 responses with a Referer header). "Finansal Rapor"
+  financial-report disclosures embed the filer's full IFRS-tagged statements as
+  pre-rendered HTML viewer tables with the literal XBRL concept
+  (`ifrs-full_Assets`, `kap-fr_...`) next to each value, so the existing IFRS
+  concept-alias table applies directly. Live-verified end-to-end (search,
+  filings, financials, balance-sheet identity - exact match on both periods)
+  against Deniz Gayrimenkul GYO, Turkcell, and BIM.
 - **Germany** - not enabled; upstream `filings.xbrl.org` currently lists German filings as unavailable for reliable discovery (documented in `README.md` already, not a new finding).
 
 ## 2. EdgarTools feature parity beyond filings + financials
@@ -122,8 +133,11 @@ adapters.
    into `main`~~ - done. Both rebased cleanly onto current `main`, full test
    suite and ruff pass. DART still needs live verification against a real
    `DART_API_KEY`.
-2. Add Turkey and Chile (Tier A, highest confidence).
+2. ~~Add Turkey~~ - done. Live-verified end-to-end this pass.
 3. Research-verify Indonesia and Thailand at the API layer, then add.
+   Re-research Chile with live-network form/endpoint inspection (the
+   direct-network path was unavailable this pass) before deciding whether
+   to build it.
 4. Generalize the UK category-filter pattern to surface non-financial
    disclosure types already present in existing feeds (NSM, ESEF, CVM, NSE) -
    this is the cheapest step toward EdgarTools' insider/ownership/current-report

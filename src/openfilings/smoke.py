@@ -68,6 +68,7 @@ SMOKE_CASES = (
     # A bank specifically, to exercise the CUIF structured balance-sheet
     # path rather than just the PDF-covered income statement.
     SmokeCase("Colombia SFC", "Banco de Bogota", "sfc"),
+    SmokeCase("Turkey KAP", "Turkcell", "kap"),
     # SEDAR+ has no public filing-search API by design; only company
     # discovery is keyless, so financials aren't checked here.
     SmokeCase("Canada TSX", "Shopify", "sedar", check_financials=False),

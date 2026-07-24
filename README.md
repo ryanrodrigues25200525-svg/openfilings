@@ -31,6 +31,11 @@ source documents into Markdown for LLMs.
 - Search South Korean KOSPI/KOSDAQ issuers through the official DART corp-code registry
 - List DART annual, semiannual, and quarterly reports and prefer their
   IFRS-XBRL-tagged financial-statement data over the filed document
+- Search BIST-listed Turkish issuers through KAP, the official Public
+  Disclosure Platform
+- List KAP quarterly, semiannual, and annual "Finansal Rapor" filings and
+  read their IFRS-tagged financial statements directly from KAP's own
+  rendered viewer tables, skipping PDF parsing entirely
 - Resolve listed-company names to legal entity identifiers (LEIs)
 - List regulated disclosures in one timeline
 - Download public PDF, HTML/XHTML, and tagged-report ZIP documents
@@ -52,13 +57,13 @@ source documents into Markdown for LLMs.
 - Use the same operations from the CLI or an MCP server
 
 All filing-feed families are free. FCA, European ESEF, CVM, SGX, BMV, NSE,
-SMV, SFC, ASX, and TSX company discovery need no key. EDINET filing retrieval
-requires free API-key registration. DART requires a free API key (immediate
-for individual sign-ups) for company search, filing history, and financial
-statements alike - unlike EDINET, DART has no keyless surface at all. SEDAR+
-discovery remains browser-based, but a generated public document URL or
-locally downloaded PDF can be imported without an account, API key, or
-browser runtime.
+SMV, SFC, ASX, KAP, and TSX company discovery need no key. EDINET filing
+retrieval requires free API-key registration. DART requires a free API key
+(immediate for individual sign-ups) for company search, filing history, and
+financial statements alike - unlike EDINET, DART has no keyless surface at
+all. SEDAR+ discovery remains browser-based, but a generated public document
+URL or locally downloaded PDF can be imported without an account, API key,
+or browser runtime.
 
 ## Setup
 
@@ -474,6 +479,19 @@ IFRS-XBRL filers is the literal `ifrs-full` taxonomy concept), so no
 DART-specific aliasing is needed. This integration was built against DART's
 documented request/response shapes and verified with mocked-response tests;
 it has not been exercised against a live API key.
+
+The Turkey connector uses KAP (Kamuyu Aydinlatma Platformu)'s own public
+website endpoints - not the paid, contract-gated Rest API data-distribution
+product - for keyless company search and disclosure listing. KAP's
+"Finansal Rapor" filings don't expose a downloadable raw XBRL instance;
+instead, each statement is pre-rendered as an HTML viewer table whose rows
+carry the filer's literal IFRS-tagged concept (`ifrs-full_Assets`,
+`kap-fr_...`) next to its reported value, so the same concept mapping used
+elsewhere applies directly - no Turkey-specific aliasing needed. The
+statement-of-changes-in-equity table uses a different rowspan-based period
+layout this connector doesn't parse. Live-verified end-to-end (search,
+filings, financials, balance-sheet identity) against Deniz Gayrimenkul GYO,
+Turkcell, and BIM.
 
 The Netherlands, France, Spain, Italy, Denmark, Sweden, Finland, Norway,
 Poland, Belgium, Austria, Luxembourg, and Portugal connectors use the free,

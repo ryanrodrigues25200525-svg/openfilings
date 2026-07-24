@@ -54,7 +54,7 @@ OpenFilings is not:
 
 ## Supported markets
 
-The current release covers 22 jurisdictions.
+The current release covers 25 jurisdictions.
 
 | Region | Jurisdiction | Source | Access status |
 |---|---|---|---|
@@ -75,11 +75,14 @@ The current release covers 22 jurisdictions.
 | Asia | Japan | EDINET | Search is keyless; filing API needs a free key |
 | Asia | Singapore | SGX | Keyless |
 | Asia | India | NSE | Keyless |
+| Asia | South Korea | DART | Requires a free `DART_API_KEY` for every operation |
+| Asia | Turkey | KAP | Keyless |
 | Americas | Brazil | CVM | Keyless |
 | Americas | Mexico | BMV | Keyless |
 | Americas | Canada | TSX/TSXV and SEDAR+ | Keyless discovery; explicit document import |
 | Americas | Peru | SMV | Keyless |
 | Americas | Colombia | SFC/SIMEV | Keyless |
+| Oceania | Australia | ASX | Keyless |
 
 The company universe is intentionally restricted to public operating companies
 listed on supported stock exchanges. Funds, warrants, ETFs, alternate currency
