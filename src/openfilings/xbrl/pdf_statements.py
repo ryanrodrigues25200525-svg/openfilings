@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import operator
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -218,6 +219,14 @@ _LINE_ITEM_ALIASES: dict[str, tuple[str, ...]] = {
         "ativo circulante",
         "activos corrientes",
         "total activos corrientes",
+        # Peruvian bank balance sheets use the singular ("activo") rather
+        # than the plural ("activos") used elsewhere.
+        "activo corriente",
+        "total activo corriente",
+        # Mexican filers use "circulante" instead of "corriente".
+        "activo circulante",
+        "total activo circulante",
+        "total del activo circulante",
         "流動資產",
         "流动资产",
     ),
@@ -229,6 +238,11 @@ _LINE_ITEM_ALIASES: dict[str, tuple[str, ...]] = {
         "ativo nao circulante",
         "activos no corrientes",
         "total activos no corrientes",
+        "activo no corriente",
+        "total activo no corriente",
+        "activo no circulante",
+        "total activo no circulante",
+        "total del activo no circulante",
         "非流動資產",
         "非流动资产",
     ),
@@ -237,6 +251,8 @@ _LINE_ITEM_ALIASES: dict[str, tuple[str, ...]] = {
         "ativo total",
         "total de activos",
         "total activos",
+        "total activo",
+        "total del activo",
         "資產總計",
         "资产总计",
     ),
@@ -246,6 +262,11 @@ _LINE_ITEM_ALIASES: dict[str, tuple[str, ...]] = {
         "passivo circulante",
         "pasivos corrientes",
         "total pasivos corrientes",
+        "pasivo corriente",
+        "total pasivo corriente",
+        "pasivo circulante",
+        "total pasivo circulante",
+        "total del pasivo circulante",
         "流動負債",
         "流动负债",
     ),
@@ -257,6 +278,11 @@ _LINE_ITEM_ALIASES: dict[str, tuple[str, ...]] = {
         "passivo nao circulante",
         "pasivos no corrientes",
         "total pasivos no corrientes",
+        "pasivo no corriente",
+        "total pasivo no corriente",
+        "pasivo no circulante",
+        "total pasivo no circulante",
+        "total del pasivo no circulante",
         "非流動負債",
         "非流动负债",
     ),
@@ -266,6 +292,8 @@ _LINE_ITEM_ALIASES: dict[str, tuple[str, ...]] = {
         "passivo circulante e nao circulante",
         "total de pasivos",
         "total pasivos",
+        "total pasivo",
+        "total del pasivo",
         "負債總計",
         "负债合计",
         "負債總額",
@@ -277,6 +305,10 @@ _LINE_ITEM_ALIASES: dict[str, tuple[str, ...]] = {
         "patrimonio liquido",
         "total patrimonio",
         "patrimonio atribuible a los propietarios",
+        # Mexican filers use "Capital Contable" for equity instead of
+        # "Patrimonio".
+        "total del capital contable",
+        "total de capital contable",
         "權益總計",
         "所有者权益合计",
         "權益總額",
@@ -369,6 +401,8 @@ _STATEMENT_HEADINGS: dict[StatementType, tuple[str, ...]] = {
         "demonstracao do resultado",
         "estado de resultados",
         "estado del resultado",
+        # Some filers (e.g. Cemex) use the plural "Estados de Resultados".
+        "estados de resultados",
         "綜合損益表",
         "利润表",
         "損益表",
@@ -380,6 +414,7 @@ _STATEMENT_HEADINGS: dict[StatementType, tuple[str, ...]] = {
         "balanco patrimonial",
         "estado de situacion financiera",
         "estado de situación financiera",
+        "estados de situacion financiera",
         "資產負債表",
         "资产负债表",
     ),
@@ -389,6 +424,7 @@ _STATEMENT_HEADINGS: dict[StatementType, tuple[str, ...]] = {
         "cash flow statement",
         "demonstracao dos fluxos de caixa",
         "estado de flujos de efectivo",
+        "estados de flujo de efectivo",
         "現金流量表",
         "现金流量表",
     ),
@@ -396,6 +432,7 @@ _STATEMENT_HEADINGS: dict[StatementType, tuple[str, ...]] = {
         "statement of other comprehensive income",
         "demonstracao do resultado abrangente",
         "estado de resultados integrales",
+        "estados de utilidad integral",
         "其他綜合損益",
     ),
     "changes_in_equity": (
@@ -403,6 +440,7 @@ _STATEMENT_HEADINGS: dict[StatementType, tuple[str, ...]] = {
         "statement of changes in equity",
         "demonstracao das mutacoes do patrimonio liquido",
         "estado de cambios en el patrimonio",
+        "estados de variaciones en el capital contable",
         "權益變動表",
         "所有者权益变动表",
     ),
@@ -717,8 +755,21 @@ def _line_items_from_table(
         if not values:
             continue
         previous = items.get(definition.code)
+        concept = f"pdf-label:{_concept_label(label)}"
         if (
             previous is not None
+            and previous.concept == concept
+            and not _all_zero(previous.values)
+            and (_all_zero(values) or len(values) <= len(previous.values))
+        ):
+            # See _line_items_from_text: the exact same label text
+            # repeating within one table (e.g. a note reusing a balance-
+            # sheet row's wording) is a reuse, not a more complete
+            # restatement - keep the first occurrence.
+            continue
+        if (
+            previous is not None
+            and previous.concept != concept
             and _all_zero(values)
             and not _all_zero(previous.values)
         ):
@@ -732,7 +783,7 @@ def _line_items_from_table(
         items[definition.code] = FinancialLineItem(
             code=definition.code,
             name=definition.name,
-            concept=f"pdf-label:{_concept_label(label)}",
+            concept=concept,
             values=values,
         )
         if definition.code == "current_assets":
@@ -1017,13 +1068,30 @@ def _heading_at(lines: tuple[str, ...], index: int) -> StatementType | None:
     happens to open with the same words (e.g. "Balance sheet dates, any
     protective rights...") would misclassify a notes page as a statement
     page.
+
+    Within the first 12 lines, a match only requires the heading text to
+    start the current line - but that line must itself start with an
+    uppercase letter. A title is capitalized even when the rest of it is
+    sentence case (e.g. "Demonstração do resultado"); a sentence wrapped
+    across a page break can otherwise leave a lowercase mid-sentence
+    fragment ("estado de resultados del año concluido...") starting a
+    page's text, which is prose continuing from the previous page, not a
+    heading. An MD&A subsection title like "Información del Estado de
+    Resultados" ("Income Statement Information") contains the real heading
+    as a substring further into the line, not at its start, and is
+    excluded the same way.
     """
     window = " ".join(lines[index : index + 3])
     normalized_window = _normalize_label(window)
+    starts_with_capital = bool(lines[index]) and lines[index][0].isupper()
     for statement_type, headings in _STATEMENT_HEADINGS.items():
         for heading in headings:
             normalized_heading = _normalize_label(heading)
-            if index < 12 and normalized_heading in normalized_window:
+            if (
+                index < 12
+                and starts_with_capital
+                and normalized_window.startswith(normalized_heading)
+            ):
                 return statement_type
             is_prefix = normalized_window.startswith(normalized_heading)
             if not is_prefix:
@@ -1094,9 +1162,68 @@ def _text_years(lines: tuple[str, ...]) -> tuple[int, ...]:
     return tuple(years[:2])
 
 
+_BALANCE_SHEET_IDENTITY_CODES = ("total_assets", "total_liabilities", "total_equity")
+
+
+def _with_derived_balance_sheet_total(
+    items: tuple[FinancialLineItem, ...],
+) -> tuple[FinancialLineItem, ...]:
+    """Derive a missing grand total from the other two via the accounting
+    identity `total_assets = total_liabilities + total_equity` when a PDF
+    heuristic finds exactly two of the three (e.g. a page never states a
+    literal "Total assets" label, or a label-matching gap drops one)."""
+    by_code = {item.code: item for item in items}
+    present = [code for code in _BALANCE_SHEET_IDENTITY_CODES if code in by_code]
+    if len(present) != 2:
+        return items
+    target = next(code for code in _BALANCE_SHEET_IDENTITY_CODES if code not in by_code)
+    if target == "total_assets":
+        base, subtrahend, op = (
+            by_code["total_liabilities"],
+            by_code["total_equity"],
+            operator.add,
+        )
+    elif target == "total_liabilities":
+        base, subtrahend, op = (
+            by_code["total_assets"],
+            by_code["total_equity"],
+            operator.sub,
+        )
+    else:
+        base, subtrahend, op = (
+            by_code["total_assets"],
+            by_code["total_liabilities"],
+            operator.sub,
+        )
+    subtrahend_by_period = {value.period.id: value for value in subtrahend.values}
+    values = tuple(
+        FinancialValue(
+            period=base_value.period,
+            value=op(
+                base_value.value, subtrahend_by_period[base_value.period.id].value
+            ),
+            unit=base_value.unit,
+            decimals=base_value.decimals,
+        )
+        for base_value in base.values
+        if base_value.period.id in subtrahend_by_period
+    )
+    if not values:
+        return items
+    definition = _DEFINITIONS[target]
+    derived = FinancialLineItem(
+        code=target,
+        name=definition.name,
+        concept="pdf-derived:balance-sheet-identity",
+        values=values,
+    )
+    return (*items, derived)
+
+
 def _statements(
     items: tuple[FinancialLineItem, ...],
 ) -> tuple[FinancialStatement, ...]:
+    items = _with_derived_balance_sheet_total(items)
     statements: list[FinancialStatement] = []
     for statement_type, title in _STATEMENT_TITLES.items():
         statement_items = tuple(
@@ -1141,13 +1268,19 @@ _DISQUALIFYING_SUFFIX_MARKERS = (
     # "Activos no Corrientes o Grupos de Activos para su Disposicion
     # Clasificados como Mantenidos para la Venta..." is the IFRS 5 Spanish
     # disposal-group disclosure, scoped separately from the base category.
+    # Some filers use the shorter form without the "o Grupos de" clause
+    # ("Activos no Corrientes Mantenidos para la Venta"), which still needs
+    # excluding from the base "activos no corrientes" category.
     "o grupos de",
+    "mantenidos para la venta",
     # "Total Equity and Liabilities" is a grand total restating total
     # assets, not the equity line item alone. "Total Pasivos y Patrimonio"
     # is the same pattern in Spanish, restating total assets rather than
-    # total liabilities alone.
+    # total liabilities alone. Mexican filers use "Capital Contable" for
+    # equity instead of "Patrimonio" ("Total Pasivo y Capital Contable").
     "and liabilities",
     "y patrimonio",
+    "y capital contable",
     # "Total Assets of the Sponsored Structured Entities" is scoped to a
     # narrow disclosure perimeter, not the entity's own total.
     "of the",

@@ -419,6 +419,106 @@ def test_aligned_pdf_text_keeps_first_occurrence_of_a_repeated_label() -> None:
     ).values[0].value == Decimal("5452000000")
 
 
+def test_definition_for_label_matches_peruvian_bank_singular_totals() -> None:
+    """Peruvian bank balance sheets (e.g. Credicorp, BCP consolidated) use
+    the singular "activo"/"pasivo" for grand totals, unlike the plural
+    "activos"/"pasivos" used by industrial filers elsewhere in the region -
+    without these aliases the totals go missing entirely (not wrong, just
+    absent) with no error raised."""
+    from openfilings.xbrl.pdf_statements import _definition_for_label
+
+    assert _definition_for_label("TOTAL ACTIVO").code == "total_assets"
+    assert _definition_for_label("TOTAL ACTIVO CORRIENTE").code == "current_assets"
+    assert (
+        _definition_for_label("TOTAL ACTIVO NO CORRIENTE").code == "noncurrent_assets"
+    )
+    assert _definition_for_label("TOTAL PASIVO").code == "total_liabilities"
+    assert _definition_for_label("TOTAL PASIVO CORRIENTE").code == "current_liabilities"
+    # BCP's individual (non-consolidated) statement uses a third phrasing,
+    # "del", that must resolve to the same codes.
+    assert _definition_for_label("TOTAL DEL ACTIVO").code == "total_assets"
+    assert _definition_for_label("TOTAL DEL PASIVO").code == "total_liabilities"
+
+
+def test_definition_for_label_rejects_total_pasivo_y_capital_contable() -> None:
+    """Mexican filers use "Capital Contable" for equity instead of
+    "Patrimonio" - "Total del Pasivo y Capital Contable" restates total
+    assets (liabilities + equity), not total liabilities alone, the same
+    pattern as "Total Pasivos y Patrimonio" in other Spanish-language
+    filings."""
+    from openfilings.xbrl.pdf_statements import _definition_for_label
+
+    assert _definition_for_label("TOTAL DEL PASIVO Y CAPITAL CONTABLE") is None
+    assert _definition_for_label("TOTAL DEL CAPITAL CONTABLE").code == "total_equity"
+
+
+def test_heading_at_rejects_mid_sentence_fragment_wrapped_across_page_break() -> None:
+    """A sentence wrapped across a PDF page break can leave a lowercase
+    fragment starting the next page's text (e.g. "...generó una ganancia
+    por recompra reconocida en el" / "estado de resultados del año
+    concluido..."). This fragment happens to start with a real statement
+    heading but is MD&A narrative prose continuing from the previous page,
+    not the heading of a new statement."""
+    from openfilings.xbrl.pdf_statements import _statement_type
+
+    lines = (
+        "PARTE I",
+        "estado de resultados del año concluido el 31 de diciembre de 2022.",
+        "De conformidad con los Instrumentos Financieros...",
+    )
+    assert _statement_type(lines) is None
+
+
+def test_heading_at_rejects_md_and_a_subsection_title_containing_heading() -> None:
+    """An MD&A subsection title like "Información del Estado de Resultados"
+    contains a real statement heading as a substring but is not the
+    statement itself - matching it silently pulls narrative summary
+    figures into the statement."""
+    from openfilings.xbrl.pdf_statements import _statement_type
+
+    lines = (
+        "Información del Estado de Resultados:",
+        "Los ingresos totales aumentaron un 8%, pasando de $14,379 millones",
+    )
+    assert _statement_type(lines) is None
+
+
+def test_derives_missing_balance_sheet_total_from_the_other_two() -> None:
+    """When a page states total liabilities and total equity but never a
+    literal "Total assets" row (common in some Singapore/SFRS filings that
+    only state the balancing "Net assets" figure), the accounting identity
+    still determines it."""
+    financials = extract_pdf_text_financials(
+        (
+            """
+            Statement of financial position
+            S$ million
+            2025
+            2024
+            Total liabilities
+            700
+            650
+            Total equity
+            300
+            250
+            """,
+        ),
+        _filing(period_end=date(2025, 12, 31)),
+        source_url="https://example.test/report.pdf",
+        sha256="k" * 64,
+    )
+
+    balance = financials.balance_sheet()
+    assert balance is not None
+    total_assets = next(
+        item for item in balance.line_items if item.code == "total_assets"
+    )
+    assert [value.value for value in total_assets.values] == [
+        Decimal("1000000000"),
+        Decimal("900000000"),
+    ]
+
+
 def test_single_word_alias_requires_glued_continuation() -> None:
     """A single-word alias (e.g. "revenue", "goodwill") must only match a
     directly-glued continuation (a plural "s", a footnote digit) - a
