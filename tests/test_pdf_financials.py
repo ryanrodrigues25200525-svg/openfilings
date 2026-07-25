@@ -172,6 +172,49 @@ def test_pdf_table_extraction_covers_common_english_summary_labels() -> None:
     assert codes["net_income_loss"] == Decimal("1172431759")
 
 
+def test_scale_ignores_a_plain_figure_that_contains_three_zeros() -> None:
+    """ "'000" (a currency symbol/apostrophe followed by three zeros) is a
+    standard scale-of-thousands marker, but _normalize_label strips the
+    punctuation around it down to a bare "000" - indistinguishable, after
+    normalization, from a plain figure that happens to contain three
+    consecutive zero digits (e.g. "8,600,031" -> "8600031"). Confirmed
+    live on a Peru SMV filing: a cash-flow context value "8600031"
+    silently applied a 1000x scale across an entire unrelated table. Only
+    a standalone "000" token is a real marker; embedded in a longer digit
+    run, it must not be."""
+    from openfilings.xbrl.pdf_statements import _scale
+
+    assert _scale("Resultado del ejercicio 8600031 6945406") == Decimal("1")
+    assert _scale("S$'000") == Decimal("1000")
+    assert _scale("Amounts in S/ 000") == Decimal("1000")
+
+
+def test_pdf_table_scale_is_not_thrown_off_by_a_figure_with_embedded_zeros() -> None:
+    markdown = """
+    # Estado de flujos de efectivo
+
+    | Cuenta | 2025 | 2024 |
+    | --- | ---: | ---: |
+    | RESULTADO ANTES DE IMPUESTO A LA RENTA | 8600031 | 6945406 |
+    | Dividendos pagados | -4746884 | -4478340 |
+    | Efectivo y equivalentes al efectivo | 43059012 | 42842917 |
+    """
+
+    financials = extract_pdf_table_financials(
+        markdown,
+        _filing(period_end=date(2025, 12, 31), source="smv", filing_type="annual"),
+        source_url="https://example.test/smv-report.pdf",
+        sha256="o" * 64,
+    )
+
+    cash_flow = financials.cash_flow_statement()
+    assert cash_flow is not None
+    dividends = next(
+        item for item in cash_flow.line_items if item.code == "dividends_paid"
+    )
+    assert dividends.values[0].value == Decimal("-4746884")
+
+
 def test_aligned_pdf_text_builds_group_financial_statements() -> None:
     financials = extract_pdf_text_financials(
         (_sgx_income_text(), _sgx_position_text(), _sgx_cash_flow_text()),

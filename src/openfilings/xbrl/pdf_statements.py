@@ -1764,10 +1764,17 @@ def _scale(value: str) -> Decimal:
         return Decimal(1_000_000_000)
     if any(marker in normalized for marker in ("million", "milhoes", "百萬元", "百萬")):
         return Decimal(1_000_000)
-    if any(
-        marker in normalized
-        for marker in ("thousand", "milhares", "000", "千元", "仟元")
-    ):
+    if any(marker in normalized for marker in ("thousand", "milhares", "千元", "仟元")):
+        return Decimal(1_000)
+    # "000" is only a scale marker as its own token (e.g. "$'000", "S/
+    # 000") - _normalize_label strips the surrounding punctuation
+    # ("$'000" becomes a standalone "000"), but a plain figure that
+    # happens to contain three consecutive zeros (e.g. "8,600,031" ->
+    # "8600031") must not trigger a false 1000x scale on the entire
+    # table. Confirmed live: Peru's BCP filing had a cash-flow context
+    # figure "8600031" silently applying a 1000x multiplier to unrelated
+    # cash/dividend values on the same table.
+    if "000" in normalized.split():
         return Decimal(1_000)
     return Decimal(1)
 
