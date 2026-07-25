@@ -1519,7 +1519,7 @@ def _definition_for_label(label: str) -> LineItemDefinition | None:
     return _fuzzy_definition_for_label(normalized)
 
 
-_FUZZY_MATCH_MIN_SCORE = 88
+_FUZZY_MATCH_MIN_SCORE = 90
 _FUZZY_MATCH_MIN_MARGIN = 5
 _FUZZY_MATCH_MAX_LENGTH = 45
 
@@ -1534,15 +1534,21 @@ def _fuzzy_definition_for_label(normalized: str) -> LineItemDefinition | None:
     already penalizes length mismatches on its own, so a label carrying
     extra qualifying text ("... Under Development", "... Attributable
     To") scores far below the threshold without needing the disqualifying
-    -suffix list to catch it. The label is additionally capped to roughly
-    the length of the longest alias, so a long prose sentence that merely
-    shares some words with an alias can never win a fuzzy match. Most
-    importantly, "current" and "noncurrent" (and "operating"/"investing"/
-    "financing" cash flow) aliases are themselves 90%+ similar to each
-    other by construction - a flat threshold alone isn't safe, so the
-    best match must also clear the runner-up (from a DIFFERENT code) by a
-    minimum margin, or the match is ambiguous and rejected rather than
-    guessed at.
+    -suffix list to catch it - but NOT far enough below for a leading
+    "Other" qualifier ("Other non-current liabilities" scores 88.5
+    against "non current liabilities", confirmed live on Keppel's filing:
+    it silently overwrote the real Non-current liabilities subtotal with
+    just that one sub-item's value). The threshold is set above the
+    worst observed "Other X" collision (88.5) while still catching real
+    typos (91.7+). "Current" and "noncurrent" (and "operating"/
+    "investing"/"financing" cash flow) aliases are themselves 90%+
+    similar to each other by construction too - a flat threshold alone
+    isn't safe on its own, so the best match must also clear the runner-
+    up (from a DIFFERENT code) by a minimum margin, or the match is
+    ambiguous and rejected rather than guessed at. The label is
+    additionally capped to roughly the length of the longest alias, so a
+    long prose sentence that merely shares some words with an alias can
+    never win a fuzzy match.
     """
     if len(normalized) > _FUZZY_MATCH_MAX_LENGTH:
         return None

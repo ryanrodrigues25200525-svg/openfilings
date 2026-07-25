@@ -676,6 +676,22 @@ def test_fuzzy_fallback_rejects_ambiguous_current_noncurrent_typo() -> None:
     assert _definition_for_label("Net current assets") is None
 
 
+def test_fuzzy_fallback_rejects_other_qualifier_prefix() -> None:
+    """A leading "Other" qualifier ("Other non-current liabilities", "Other
+    current assets") is a distinct sub-item, not a formatting variant of
+    the base category - confirmed live on Keppel's real filing, where
+    "Other non-current liabilities" fuzzy-matched noncurrent_liabilities
+    (score 88.5) and silently overwrote the real section subtotal with
+    just that one sub-item's value. The threshold must sit above the
+    worst observed "Other X" collision."""
+    from openfilings.xbrl.pdf_statements import _definition_for_label
+
+    assert _definition_for_label("Other non-current liabilities") is None
+    assert _definition_for_label("Other current liabilities") is None
+    assert _definition_for_label("Other non-current assets") is None
+    assert _definition_for_label("Other current assets") is None
+
+
 def test_financial_extractor_routes_pdf_documents_to_table_parser(monkeypatch) -> None:
     monkeypatch.setattr(
         "openfilings.xbrl.pdf_statements._pdf_statement_sections", lambda _: ()
