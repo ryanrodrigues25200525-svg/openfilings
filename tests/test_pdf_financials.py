@@ -651,6 +651,31 @@ def test_single_word_alias_requires_glued_continuation() -> None:
     assert _definition_for_label("Goodwill").code == "goodwill"
 
 
+def test_fuzzy_fallback_catches_near_miss_spellings() -> None:
+    """A PDF's text layer can introduce near-miss spellings that exact and
+    prefix matching won't catch verbatim - a transposed letter, a dropped
+    letter, a misread character. The fuzzy fallback catches these while
+    still resolving cleanly-spelled labels via the faster exact/prefix
+    tiers first."""
+    from openfilings.xbrl.pdf_statements import _definition_for_label
+
+    assert _definition_for_label("Grose profit").code == "gross_profit"
+    assert _definition_for_label("Toatl assets").code == "total_assets"
+    assert _definition_for_label("Cost of Revenu").code == "cost_of_revenue"
+
+
+def test_fuzzy_fallback_rejects_ambiguous_current_noncurrent_typo() -> None:
+    """ "Current" and "noncurrent" aliases are themselves highly similar
+    strings - a misspelled "Current liabilities" must not be fuzzy-matched
+    to "noncurrent_liabilities" just because that alias also scores highly;
+    the correct code must clearly beat every other code's best match, not
+    merely clear a flat score threshold."""
+    from openfilings.xbrl.pdf_statements import _definition_for_label
+
+    assert _definition_for_label("Curent liabilities").code == "current_liabilities"
+    assert _definition_for_label("Net current assets") is None
+
+
 def test_financial_extractor_routes_pdf_documents_to_table_parser(monkeypatch) -> None:
     monkeypatch.setattr(
         "openfilings.xbrl.pdf_statements._pdf_statement_sections", lambda _: ()

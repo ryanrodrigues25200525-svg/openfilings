@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 
+from rapidfuzz import fuzz
+
 from openfilings.exceptions import ExtractionError, FinancialsUnavailableError
 from openfilings.extraction.pdf import pdf_to_markdown
 from openfilings.models import (
@@ -1514,6 +1516,54 @@ def _definition_for_label(label: str) -> LineItemDefinition | None:
             disqualified = _has_disqualifying_suffix(normalized, normalized_alias)
             if is_prefix and not disqualified:
                 return _DEFINITIONS[code]
+    return _fuzzy_definition_for_label(normalized)
+
+
+_FUZZY_MATCH_MIN_SCORE = 88
+_FUZZY_MATCH_MIN_MARGIN = 5
+_FUZZY_MATCH_MAX_LENGTH = 45
+
+
+def _fuzzy_definition_for_label(normalized: str) -> LineItemDefinition | None:
+    """A last-resort fallback for near-miss spellings a PDF's text layer
+    can introduce - a dropped ligature ("Proft" for "Profit"), an OCR
+    misread, a missing accent - that exact and prefix matching won't
+    catch verbatim.
+
+    Deliberately conservative in three ways: whole-string ratio scoring
+    already penalizes length mismatches on its own, so a label carrying
+    extra qualifying text ("... Under Development", "... Attributable
+    To") scores far below the threshold without needing the disqualifying
+    -suffix list to catch it. The label is additionally capped to roughly
+    the length of the longest alias, so a long prose sentence that merely
+    shares some words with an alias can never win a fuzzy match. Most
+    importantly, "current" and "noncurrent" (and "operating"/"investing"/
+    "financing" cash flow) aliases are themselves 90%+ similar to each
+    other by construction - a flat threshold alone isn't safe, so the
+    best match must also clear the runner-up (from a DIFFERENT code) by a
+    minimum margin, or the match is ambiguous and rejected rather than
+    guessed at.
+    """
+    if len(normalized) > _FUZZY_MATCH_MAX_LENGTH:
+        return None
+    best_code: str | None = None
+    best_score = 0.0
+    runner_up_score = 0.0
+    for code, aliases in _LINE_ITEM_ALIASES.items():
+        code_best_score = max(
+            (fuzz.ratio(normalized, _normalize_label(alias)) for alias in aliases),
+            default=0.0,
+        )
+        if code_best_score > best_score:
+            best_code, best_score, runner_up_score = code, code_best_score, best_score
+        elif code_best_score > runner_up_score:
+            runner_up_score = code_best_score
+    if (
+        best_code is not None
+        and best_score > _FUZZY_MATCH_MIN_SCORE
+        and best_score - runner_up_score >= _FUZZY_MATCH_MIN_MARGIN
+    ):
+        return _DEFINITIONS[best_code]
     return None
 
 
