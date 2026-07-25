@@ -379,6 +379,43 @@ def test_aligned_pdf_text_finds_unlabeled_subtotal_in_net_assets_presentation() 
     assert total_equity.values[0].value == Decimal("9300000")
 
 
+def test_aligned_pdf_text_resolves_group_company_breakdown_with_multiline_labels() -> (
+    None
+):
+    """Keppel-style "Group"/"Company" balance sheets indent sub-items
+    across two short lines ("Amounts due from:" / "- subsidiaries"), which
+    would otherwise trip the same bail-out that protects against wandering
+    into footnote prose. The real subtotal directly follows the last
+    sub-item's values with no separator, and is itself followed by an
+    unrelated "Net current assets" row before the next real section -
+    neither should be read as "Total current liabilities"."""
+    financials = extract_pdf_text_financials(
+        (_group_company_current_liabilities_text(),),
+        _filing(period_end=date(2025, 12, 31), source="sgx", filing_type="annual"),
+        source_url="https://example.test/keppel-report.pdf",
+        sha256="l" * 64,
+    )
+
+    balance = financials.balance_sheet()
+    assert balance is not None
+    current_liabilities = next(
+        item for item in balance.line_items if item.code == "current_liabilities"
+    )
+    assert [value.value for value in current_liabilities.values] == [
+        Decimal("5778714000"),
+        Decimal("4771044000"),
+    ]
+    # Derived from current_liabilities + noncurrent_liabilities, since no
+    # combined "Total liabilities" row exists on this page.
+    total_liabilities = next(
+        item for item in balance.line_items if item.code == "total_liabilities"
+    )
+    assert [value.value for value in total_liabilities.values] == [
+        Decimal("15901637000"),
+        Decimal("16232693000"),
+    ]
+
+
 def test_aligned_pdf_text_prefers_larger_total_when_periods_tie() -> None:
     """A note reusing a grand-total label ("Total assets") for a narrower
     scope (a structured entity, a subsidiary) can only describe a subset of
@@ -843,6 +880,75 @@ def _cvm_balance_sheet_text() -> str:
     Patrimonio liquido
     417.587
     367.514
+    """
+
+
+def _group_company_current_liabilities_text() -> str:
+    return """
+    Balance Sheets
+    as at 31 December 2025
+    GROUP
+    COMPANY
+    Note
+    2025
+    $'000
+    2024
+    $'000
+    2025
+    $'000
+    2024
+    $'000
+    Current liabilities
+    Creditors
+    23
+    2,383,827
+    2,730,241
+    95,055
+    95,514
+    Provisions
+    24
+    120,174
+    138,420
+    -
+    -
+    Amounts due to:
+    - subsidiaries
+    19
+    -
+    -
+    241,471
+    184,010
+    Term loans
+    25
+    1,906,467
+    1,389,004
+    1,457,963
+    1,098,473
+    4,960,122
+    4,771,044
+    1,811,938
+    1,445,215
+    Liabilities directly associated with disposal group and assets classified
+    as held for sale
+    38
+    818,592
+    -
+    -
+    -
+    5,778,714
+    4,771,044
+    1,811,938
+    1,445,215
+    Net current assets
+    1,984,113
+    1,848,053
+    8,826,589
+    8,077,833
+    Non-current liabilities
+    10,122,923
+    11,461,649
+    9,207,590
+    8,547,590
     """
 
 

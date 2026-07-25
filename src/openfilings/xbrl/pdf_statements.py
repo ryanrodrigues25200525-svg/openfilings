@@ -403,6 +403,12 @@ _STATEMENT_HEADINGS: dict[StatementType, tuple[str, ...]] = {
         "consolidated income statement",
         "income statement",
         "statement of profit or loss",
+        # "Consolidated Statement of Profit or Loss and Other Comprehensive
+        # Income" (Sheng Siong and other SGX filers) starts with
+        # "consolidated", so it isn't a prefix-match for either
+        # "consolidated income statement" or "statement of profit or loss"
+        # on its own.
+        "consolidated statement of profit or loss",
         "demonstracao do resultado",
         "estado de resultados",
         "estado del resultado",
@@ -417,6 +423,10 @@ _STATEMENT_HEADINGS: dict[StatementType, tuple[str, ...]] = {
     ),
     "balance_sheet": (
         "statement of financial position",
+        # Some filers (e.g. Sheng Siong) title this "Statements of
+        # Financial Position" - plural - even when every other statement
+        # in the same filing uses the singular "Statement of ...".
+        "statements of financial position",
         "consolidated balance sheet",
         "balance sheet",
         "balanco patrimonial",
@@ -658,6 +668,7 @@ def _line_items_from_text(
     years = _text_years(lines)
     if statement_type is None or not years:
         return ()
+    multiplier = _period_multiplier(lines, years)
     lines = _truncated_at_next_statement(lines, statement_type)
     header = "\n".join(lines[:30])
     currency = _currency(header) or _DEFAULT_CURRENCY_BY_SOURCE.get(filing.source)
@@ -668,7 +679,9 @@ def _line_items_from_text(
         definition = _definition_for_label(label)
         if definition is None or definition.statement_type != statement_type:
             continue
-        numbers = _aligned_numbers(lines, index + 1, len(years), definition)
+        numbers = _aligned_numbers(
+            lines, index + 1, len(years), definition, multiplier=multiplier
+        )
         if not numbers:
             continue
         values = _values_from_numbers(
@@ -908,6 +921,8 @@ def _aligned_numbers(
     start: int,
     period_count: int,
     definition: LineItemDefinition,
+    *,
+    multiplier: int = 1,
 ) -> tuple[Decimal, ...]:
     window = lines[start : start + 14]
     # Normally a row's own values sit directly on the lines right after its
@@ -928,7 +943,10 @@ def _aligned_numbers(
     )
     if leads_with_text:
         return _breakdown_aligned_numbers(
-            lines[start : start + 40], period_count, definition
+            lines[start : start + 40 * multiplier],
+            period_count,
+            definition,
+            multiplier=multiplier,
         )
     numbers: list[Decimal] = []
     consecutive_non_numeric = 0
@@ -964,10 +982,23 @@ def _aligned_numbers(
     return tuple(numbers[:period_count])
 
 
+_MAX_SUB_LABEL_WORDS = 7
+# "Net current assets"/"Net current liabilities" is a distinct working-
+# capital metric (current assets minus current liabilities) that commonly
+# follows the current-liabilities subtotal directly. It matches no line-
+# item alias, so an unbounded breakdown scan would otherwise treat it as
+# just another unlabeled sub-item and keep going, letting its own values
+# become the new "last run" and silently replace the real subtotal found
+# just before it.
+_BREAKDOWN_BOUNDARY_PHRASES = ("net current assets", "net current liabilities")
+
+
 def _breakdown_aligned_numbers(
     window: tuple[str, ...],
     period_count: int,
     definition: LineItemDefinition,
+    *,
+    multiplier: int = 1,
 ) -> tuple[Decimal, ...]:
     """Resolve a label followed by an unlabeled breakdown before its total.
 
@@ -981,11 +1012,21 @@ def _breakdown_aligned_numbers(
         next_definition = _definition_for_label(line)
         if next_definition is not None and next_definition.code != definition.code:
             break
+        if _normalize_label(line) in _BREAKDOWN_BOUNDARY_PHRASES:
+            break
         number = _number(line)
         if number is None:
             if runs[-1]:
                 runs.append([])
             if _is_placeholder_cell(line):
+                continue
+            # A dual-entity layout (e.g. "Group"/"Company" columns) often
+            # indents a sub-item across two short lines ("Amounts due
+            # from:" / "- subsidiaries"), which would otherwise look
+            # identical to genuine footnote prose leaking in. A short
+            # fragment is still a label, not prose - only a long,
+            # sentence-like line signals the scan has left the statement.
+            if multiplier > 1 and len(line.split()) <= _MAX_SUB_LABEL_WORDS:
                 continue
             consecutive_non_numeric += 1
             if consecutive_non_numeric >= _MAX_CONSECUTIVE_NON_NUMERIC_LINES:
@@ -1002,6 +1043,20 @@ def _breakdown_aligned_numbers(
     candidate = runs[-1]
     if len(candidate) > period_count and _looks_like_note(candidate[0], candidate[1:]):
         candidate = candidate[1:]
+    if multiplier > 1:
+        # Each logical row is period_count * multiplier numbers wide (e.g.
+        # Group-2025, Group-2024, Company-2025, Company-2024), but a
+        # missing separator between the last breakdown item and the
+        # unlabeled total can merge them into one run with no marker to
+        # split on. The total is always the most recent complete row
+        # before the scan stopped - and only its first period_count
+        # values (Group) are ever returned, regardless of which column
+        # happens to be numerically larger.
+        row_width = period_count * multiplier
+        if len(candidate) >= row_width:
+            candidate = candidate[-row_width:]
+            return tuple(candidate[:period_count])
+        return ()
     if len(candidate) > period_count:
         split = _footnote_split(candidate, period_count)
         if split is not None:
@@ -1153,8 +1208,17 @@ def _truncated_at_next_statement(
     whose columns are equity components, not fiscal years), so scanning
     stops at the next different statement's heading rather than reading
     its content under this statement's type.
+
+    The search starts past the first 12 lines - a page's own running
+    header can list the current statement's title directly followed by a
+    preview of the NEXT statement's title (e.g. "Balance sheets ... DBS
+    Group Holdings Ltd and its Subsidiaries Consolidated statement of
+    changes in equity"), both before any real row data. Treating that
+    adjacent mention as a mid-page transition truncates the section down
+    to nothing; a genuine bundled second statement only ever starts after
+    real content, well beyond the header block.
     """
-    for index in range(len(lines)):
+    for index in range(12, len(lines)):
         match = _heading_at(lines, index)
         if match is not None and match != own_type:
             return lines[:index]
@@ -1171,7 +1235,91 @@ def _text_years(lines: tuple[str, ...]) -> tuple[int, ...]:
     return tuple(years[:2])
 
 
+_GROUP_MARKERS = frozenset({"group", "the group"})
+_COMPANY_MARKERS = frozenset({"company", "the company"})
+
+
+def _period_multiplier(lines: tuple[str, ...], years: tuple[int, ...]) -> int:
+    """Detect a repeated per-entity block in a statement's header (e.g.
+    Singapore filers commonly show "Group" and "Company" columns side by
+    side, each with the same year sequence: "2025 2024 2025 2024"). When
+    detected, each row is twice as wide as the period count alone would
+    suggest - the row's OWN Group values are always the first
+    `period_count` of the (period_count * 2) numbers, but a breakdown's
+    true subtotal can't be located without knowing the row is that wide.
+
+    Both a "Group"/"Company" marker line and each year appearing at least
+    twice are required - a title subtitle ("as at 31 December 2025") can
+    legitimately repeat a year once more without the layout being dual-
+    entity, so an exact count would false-negative on that page; the
+    marker line is the real signal, the repeat count only confirms it.
+    """
+    if len(years) < 2:
+        return 1
+    header = lines[:30]
+    normalized_header = [_normalize_label(line) for line in header]
+    if not (
+        any(line in _GROUP_MARKERS for line in normalized_header)
+        and any(line in _COMPANY_MARKERS for line in normalized_header)
+    ):
+        return 1
+    counts = {year: 0 for year in years}
+    for line in header:
+        for match in _YEAR_PATTERN.finditer(line):
+            year = int(match.group(1))
+            if year in counts:
+                counts[year] += 1
+    return 2 if all(count >= 2 for count in counts.values()) else 1
+
+
 _BALANCE_SHEET_IDENTITY_CODES = ("total_assets", "total_liabilities", "total_equity")
+_CURRENT_NONCURRENT_SUM_TARGETS = (
+    ("total_assets", "current_assets", "noncurrent_assets"),
+    ("total_liabilities", "current_liabilities", "noncurrent_liabilities"),
+)
+
+
+def _with_derived_current_noncurrent_totals(
+    items: tuple[FinancialLineItem, ...],
+) -> tuple[FinancialLineItem, ...]:
+    """Derive a missing "Total assets"/"Total liabilities" from its current
+    and non-current components when a filer states both halves of the
+    balance sheet but never states the combined figure on the same page
+    (e.g. some Singapore filers present the balancing figure only as "Net
+    assets" further down, with no literal "Total assets" row at all)."""
+    by_code = {item.code: item for item in items}
+    added: list[FinancialLineItem] = []
+    for target, current_code, noncurrent_code in _CURRENT_NONCURRENT_SUM_TARGETS:
+        if target in by_code:
+            continue
+        current = by_code.get(current_code)
+        noncurrent = by_code.get(noncurrent_code)
+        if current is None or noncurrent is None:
+            continue
+        noncurrent_by_period = {value.period.id: value for value in noncurrent.values}
+        values = tuple(
+            FinancialValue(
+                period=current_value.period,
+                value=current_value.value
+                + noncurrent_by_period[current_value.period.id].value,
+                unit=current_value.unit,
+                decimals=current_value.decimals,
+            )
+            for current_value in current.values
+            if current_value.period.id in noncurrent_by_period
+        )
+        if not values:
+            continue
+        definition = _DEFINITIONS[target]
+        derived = FinancialLineItem(
+            code=target,
+            name=definition.name,
+            concept="pdf-derived:current-noncurrent-sum",
+            values=values,
+        )
+        added.append(derived)
+        by_code[target] = derived
+    return (*items, *added)
 
 
 def _with_derived_balance_sheet_total(
@@ -1232,6 +1380,7 @@ def _with_derived_balance_sheet_total(
 def _statements(
     items: tuple[FinancialLineItem, ...],
 ) -> tuple[FinancialStatement, ...]:
+    items = _with_derived_current_noncurrent_totals(items)
     items = _with_derived_balance_sheet_total(items)
     statements: list[FinancialStatement] = []
     for statement_type, title in _STATEMENT_TITLES.items():
