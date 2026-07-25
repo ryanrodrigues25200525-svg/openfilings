@@ -483,6 +483,54 @@ def test_heading_at_rejects_md_and_a_subsection_title_containing_heading() -> No
     assert _statement_type(lines) is None
 
 
+def test_heading_at_matches_colombian_estados_del_resultado() -> None:
+    """Colombian filers (e.g. Grupo Argos) title the income statement
+    "Estados del Resultado" - plural "Estados", singular "Resultado", and
+    "del" instead of "de" - a fourth combination distinct from the other
+    Spanish/Portuguese variants already covered. Missing it meant the real
+    statement page was skipped entirely and a footnote/MD&A page with the
+    same generic line-item labels won instead, producing plausible but
+    fabricated figures."""
+    from openfilings.xbrl.pdf_statements import _statement_type
+
+    lines = ("Grupo Argos S.A.", "ESTADOS DEL RESULTADO SEPARADO")
+    assert _statement_type(lines) == "income_statement"
+
+
+def test_definition_for_label_prefers_continuing_over_discontinued_operations() -> None:
+    """A filer reporting a discontinued-operations split states the same
+    subtotal label twice, scoped differently ("Utilidad Antes de Impuestos
+    por Operaciones Continuadas" vs "...Operaciones Discontinuadas",
+    "Impuestos sobre las Ganancias por Operaciones Continuadas" vs
+    "...Discontinuadas"). The discontinued-operations variant must not
+    match - it's a narrower figure than the entity's headline pre-tax
+    profit or tax expense."""
+    from openfilings.xbrl.pdf_statements import _definition_for_label
+
+    assert (
+        _definition_for_label(
+            "Utilidad antes de impuestos por operaciones continuadas"
+        ).code
+        == "profit_before_tax"
+    )
+    assert (
+        _definition_for_label("Utilidad antes de impuestos operaciones discontinuadas")
+        is None
+    )
+    assert (
+        _definition_for_label(
+            "Impuestos sobre las ganancias por operaciones continuadas"
+        ).code
+        == "income_tax"
+    )
+    assert (
+        _definition_for_label(
+            "Impuestos sobre las ganancias por operaciones discontinuadas"
+        )
+        is None
+    )
+
+
 def test_derives_missing_balance_sheet_total_from_the_other_two() -> None:
     """When a page states total liabilities and total equity but never a
     literal "Total assets" row (common in some Singapore/SFRS filings that

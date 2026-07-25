@@ -73,6 +73,7 @@ _LINE_ITEM_ALIASES: dict[str, tuple[str, ...]] = {
         "cost of sales",
         "custo das vendas",
         "costo de ventas",
+        "costo de actividades ordinarias",
         "營業成本",
         "营业成本",
     ),
@@ -101,6 +102,8 @@ _LINE_ITEM_ALIASES: dict[str, tuple[str, ...]] = {
         "ganancia operativa",
         "utilidad operativa",
         "ganancia perdida operativa",
+        "utilidad de actividades operacionales",
+        "ganancia de actividades operacionales",
         "營業利益",
         "营业利润",
         "營業損失",
@@ -129,6 +132,8 @@ _LINE_ITEM_ALIASES: dict[str, tuple[str, ...]] = {
         "imposto de renda e contribuicao social",
         "gasto por impuesto a las ganancias",
         "ingreso gasto por impuesto",
+        "impuesto sobre las ganancias",
+        "impuestos sobre las ganancias",
         "所得稅費用",
         "所得税费用",
         "所得稅利益",
@@ -403,6 +408,9 @@ _STATEMENT_HEADINGS: dict[StatementType, tuple[str, ...]] = {
         "estado del resultado",
         # Some filers (e.g. Cemex) use the plural "Estados de Resultados".
         "estados de resultados",
+        # Colombian filers (e.g. Grupo Argos) use plural "Estados" with
+        # singular "Resultado" and "del" instead of "de".
+        "estados del resultado",
         "綜合損益表",
         "利润表",
         "損益表",
@@ -433,6 +441,7 @@ _STATEMENT_HEADINGS: dict[StatementType, tuple[str, ...]] = {
         "demonstracao do resultado abrangente",
         "estado de resultados integrales",
         "estados de utilidad integral",
+        "estados de otro resultado integral",
         "其他綜合損益",
     ),
     "changes_in_equity": (
@@ -1285,6 +1294,15 @@ _DISQUALIFYING_SUFFIX_MARKERS = (
     # narrow disclosure perimeter, not the entity's own total.
     "of the",
     "attributable to",
+    # A filer reporting a discontinued-operations split states the same
+    # subtotal label twice - once scoped to continuing operations, once to
+    # discontinued operations (e.g. "Utilidad Antes de Impuestos por
+    # Operaciones Continuadas" vs "Utilidad Antes de Impuestos Operaciones
+    # Discontinuadas"). The discontinued-operations variant is a narrower
+    # figure, not the entity's headline pre-tax profit or tax expense.
+    "operaciones discontinuadas",
+    "por operaciones discontinuadas",
+    "discontinued operations",
 )
 
 
