@@ -540,17 +540,30 @@ def extract_pdf_text_financials(
             previous = selected.get(item.code)
             if previous is None or len(item.values) > len(previous.values):
                 selected[item.code] = item
-            elif (
-                len(item.values) == len(previous.values)
-                and item.code in _SCOPE_SUPERSET_CODES
-                and _magnitude(item.values) > _magnitude(previous.values)
-            ):
+                continue
+            if len(item.values) != len(previous.values):
+                continue
+            if _period_ids(item.values) != _period_ids(previous.values):
+                # A PDF can bundle multiple full annual reports (e.g. a
+                # 20-F including 3 years of complete audited comparatives,
+                # each covering its own 2-year pair). Two candidates tying
+                # on period count here don't describe the same fiscal
+                # years at all - they're from a different vintage/section,
+                # not a scope difference - so the magnitude contest below
+                # would blend unrelated years. The more recent vintage is
+                # the filing's own current-year data.
+                if _latest_end_date(item.values) > _latest_end_date(previous.values):
+                    selected[item.code] = item
+                continue
+            if item.code in _SCOPE_SUPERSET_CODES and _magnitude(
+                item.values
+            ) > _magnitude(previous.values):
                 # A grand total ("Total assets", "Total liabilities",
                 # "Total equity") is definitionally the entity's full
                 # scope - a note reusing the same label for a narrower
                 # disclosure (a subsidiary, a structured entity) can only
-                # describe a subset of it. When two candidates tie on
-                # period count, the larger one is the real total.
+                # describe a subset of it. When two candidates tie on the
+                # same fiscal years, the larger one is the real total.
                 selected[item.code] = item
     statements = _statements(tuple(selected.values()))
     if not statements:
@@ -824,6 +837,14 @@ def _all_zero(values: tuple[FinancialValue, ...]) -> bool:
 
 def _magnitude(values: tuple[FinancialValue, ...]) -> Decimal:
     return sum((abs(value.value) for value in values), start=Decimal(0))
+
+
+def _period_ids(values: tuple[FinancialValue, ...]) -> frozenset[str]:
+    return frozenset(value.period.id for value in values)
+
+
+def _latest_end_date(values: tuple[FinancialValue, ...]) -> date:
+    return max(value.period.end_date for value in values)
 
 
 def _table_format(table: _MarkdownTable) -> _TableFormat | None:
@@ -1443,6 +1464,11 @@ _DISQUALIFYING_SUFFIX_MARKERS = (
     # narrow disclosure perimeter, not the entity's own total.
     "of the",
     "attributable to",
+    # "Utilidad Neta de la Participación Controladora/No Controladora" is
+    # net income attributable to just the controlling or non-controlling
+    # interest - a split of consolidated net income, not the total itself.
+    "de la participacion controladora",
+    "de la participacion no controladora",
     # A filer reporting a discontinued-operations split states the same
     # subtotal label twice - once scoped to continuing operations, once to
     # discontinued operations (e.g. "Utilidad Antes de Impuestos por

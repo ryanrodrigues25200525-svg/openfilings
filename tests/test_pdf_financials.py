@@ -435,6 +435,33 @@ def test_aligned_pdf_text_prefers_larger_total_when_periods_tie() -> None:
     ).values[0].value == Decimal("897488000000")
 
 
+def test_aligned_pdf_text_does_not_blend_bundled_annual_report_vintages() -> None:
+    """A PDF can bundle multiple full annual reports (e.g. a 20-F including
+    3 years of complete audited comparatives, each covering its own 2-year
+    pair - Cemex's filings do this). Two sections tying on period count
+    here describe genuinely DIFFERENT fiscal years, not a scope difference
+    - the older vintage's same-length candidate must never win a magnitude
+    contest against the more recent one just because it happens to be a
+    bigger number."""
+    financials = extract_pdf_text_financials(
+        (
+            _older_vintage_income_statement_text(),
+            _current_vintage_income_statement_text(),
+        ),
+        _filing(period_end=date(2023, 12, 31), source="bmv", filing_type="annual"),
+        source_url="https://example.test/cemex-report.pdf",
+        sha256="m" * 64,
+    )
+
+    income = financials.income_statement()
+    assert income is not None
+    revenue = next(item for item in income.line_items if item.code == "revenue")
+    assert [value.value for value in revenue.values] == [
+        Decimal("17388"),
+        Decimal("15577"),
+    ]
+
+
 def test_aligned_pdf_text_keeps_first_occurrence_of_a_repeated_label() -> None:
     """A cash-flow reconciliation note ("changes in working capital") can
     reuse a balance-sheet row's exact label ("Trade and other receivables")
@@ -1108,6 +1135,36 @@ def _note_scoped_total_assets_text() -> str:
     Total assets of the sponsored structured entities
     3,159
     1,114
+    """
+
+
+def _older_vintage_income_statement_text() -> str:
+    return """
+    Estado de resultados
+    Años terminados el 31 de diciembre
+    2022
+    2021
+    Ingresos
+    99,999
+    88,888
+    Utilidad neta
+    9,999
+    8,888
+    """
+
+
+def _current_vintage_income_statement_text() -> str:
+    return """
+    Estado de resultados
+    Años terminados el 31 de diciembre
+    2023
+    2022
+    Ingresos
+    17,388
+    15,577
+    Utilidad neta
+    885
+    778
     """
 
 
