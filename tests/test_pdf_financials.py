@@ -462,6 +462,45 @@ def test_aligned_pdf_text_does_not_blend_bundled_annual_report_vintages() -> Non
     ]
 
 
+def test_aligned_pdf_text_rejects_negative_intangible_assets_from_a_note() -> None:
+    """A properly presented balance sheet never reports intangible assets
+    as negative. Confirmed live on Cemex's filing: "Activos intangibles"
+    matched a cash-flow reconciliation note's period-on-period movement
+    (a parenthesized, and therefore negative, adjustment) rather than the
+    entity's real balance-sheet total - Cemex doesn't even report
+    intangibles standalone (it's combined with goodwill), so the correct
+    outcome is no intangible_assets figure at all, not a fabricated
+    negative one."""
+    text = """
+    Estado de situacion financiera
+    Al 31 de diciembre
+    2023
+    2022
+    Activos intangibles
+    17
+    (192)
+    (53)
+    (116)
+    Inventarios
+    1,789
+    1,669
+    Total activos
+    28,433
+    26,447
+    """
+    financials = extract_pdf_text_financials(
+        (text,),
+        _filing(period_end=date(2023, 12, 31), source="bmv", filing_type="annual"),
+        source_url="https://example.test/cemex-report.pdf",
+        sha256="n" * 64,
+    )
+
+    balance = financials.balance_sheet()
+    assert balance is not None
+    codes = {item.code for item in balance.line_items}
+    assert "intangible_assets" not in codes
+
+
 def test_aligned_pdf_text_keeps_first_occurrence_of_a_repeated_label() -> None:
     """A cash-flow reconciliation note ("changes in working capital") can
     reuse a balance-sheet row's exact label ("Trade and other receivables")

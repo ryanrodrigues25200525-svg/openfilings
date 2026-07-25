@@ -37,6 +37,26 @@ _MAX_CONSECUTIVE_NON_NUMERIC_LINES = 2
 # label (e.g. a structured-entity or subsidiary disclosure) can only be a
 # subset of it, never larger.
 _SCOPE_SUPERSET_CODES = frozenset({"total_assets", "total_liabilities", "total_equity"})
+# A properly presented balance sheet never reports these as negative - a
+# negative match is a sign the scan landed on an unrelated note (a cash-
+# flow reconciliation adjustment, an impairment/amortization movement)
+# rather than the entity's own asset balance, even though the label text
+# matched. Confirmed live: Cemex's "Activos intangibles" alias matched a
+# cash-flow note's period-on-period movement, not a real balance-sheet
+# total - the note values are parenthesized (negative) by construction.
+_NEVER_NEGATIVE_ASSET_CODES = frozenset(
+    {
+        "cash_and_cash_equivalents",
+        "trade_receivables",
+        "inventory",
+        "property_plant_equipment",
+        "goodwill",
+        "intangible_assets",
+        "current_assets",
+        "noncurrent_assets",
+        "total_assets",
+    }
+)
 _NON_LABEL_PATTERN = re.compile(r"[^\w\s]+", re.UNICODE)
 _WHITESPACE_PATTERN = re.compile(r"\s+")
 # Indian lakh/crore grouping (e.g. "2,57,935" or "10,22,401"): the last
@@ -699,6 +719,10 @@ def _line_items_from_text(
         )
         if not numbers:
             continue
+        if definition.code in _NEVER_NEGATIVE_ASSET_CODES and any(
+            number < 0 for number in numbers
+        ):
+            continue
         values = _values_from_numbers(
             numbers,
             years,
@@ -790,6 +814,10 @@ def _line_items_from_table(
             continue
         values = _row_values(row, definition, table_format, filing)
         if not values:
+            continue
+        if definition.code in _NEVER_NEGATIVE_ASSET_CODES and any(
+            value.value < 0 for value in values
+        ):
             continue
         previous = items.get(definition.code)
         concept = f"pdf-label:{_concept_label(label)}"
