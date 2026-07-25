@@ -6,6 +6,7 @@ from decimal import Decimal
 import pytest
 
 from openfilings import server
+from openfilings.adapters.base import SourceDocument
 from openfilings.domain import FilingDocument
 from openfilings.exceptions import FinancialsUnavailableError
 from openfilings.models import (
@@ -19,6 +20,8 @@ from openfilings.models import (
     ReportingPeriod,
 )
 from openfilings.resources import FilingResource
+from openfilings.service import OpenFilingsService
+from openfilings.storage.sqlite import SQLiteCache
 
 
 class _FakeService:
@@ -257,6 +260,119 @@ async def test_financials_failure_points_to_manual_extraction_fallback(
     suggestions = " ".join(response["suggestions"])
     assert "filing_search" in suggestions
     assert "filing_markdown" in suggestions
+
+
+@pytest.mark.asyncio
+async def test_filing_financials_extracts_a_real_pdf_end_to_end(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every other MCP test in this file mocks get_filing_financials to
+    return a hand-built FilingFinancials object, so none of them exercise
+    the real PDF extraction pipeline (heading detection, label matching,
+    the RapidFuzz fallback) through the actual tool the way an MCP client
+    would call it. This is the gap that let a real regression through 176
+    passing unit tests: "Other non-current liabilities" (a genuine
+    Keppel sub-item) fuzzy-matched the same code as its own parent
+    section and silently overwrote the real subtotal - only caught by
+    manually calling filing_financials() against a live filing. This test
+    reproduces that exact shape with a real, minimal PDF (not a text
+    fixture), routed through the real OpenFilingsService and the real
+    MCP tool function, so a regression here fails a test instead of
+    requiring a live filing to notice.
+    """
+    import pymupdf
+
+    doc = pymupdf.open()
+    page = doc.new_page()
+    lines = (
+        "Balance Sheets",
+        "as at 31 December 2025",
+        "GROUP",
+        "COMPANY",
+        "Note",
+        "2025",
+        "$'000",
+        "2024",
+        "$'000",
+        "2025",
+        "$'000",
+        "2024",
+        "$'000",
+        "Non-current liabilities",
+        "Term loans",
+        "25",
+        "9,409,036",
+        "10,509,001",
+        "8,493,628",
+        "8,161,900",
+        "Other non-current liabilities",
+        "23",
+        "120,968",
+        "332,819",
+        "28,156",
+        "28,156",
+        "10,122,923",
+        "11,461,649",
+        "8,647,781",
+        "8,240,799",
+        "Net assets",
+        "11,186,180",
+        "11,425,661",
+        "7,945,822",
+        "8,058,123",
+    )
+    y = 50
+    for line in lines:
+        page.insert_text((50, y), line, fontsize=10)
+        y += 15
+    pdf_bytes = doc.tobytes()
+    doc.close()
+
+    filing = Filing(
+        id="sg_sgx_keppel_like",
+        company_id="sg_sgx_1L01",
+        source="sgx",
+        source_id="keppel_like",
+        title="2025 Annual Report",
+        category="accounts",
+        filing_type="annual",
+        filing_date=date(2026, 3, 1),
+        period_end=date(2025, 12, 31),
+        document_id="https://example.test/keppel-like.pdf",
+        media_type="application/pdf",
+        issuer_name="Example Ltd",
+        pdf_available=True,
+        source_url="https://example.test/keppel-like.pdf",
+    )
+    cache = SQLiteCache(tmp_path / "cache.sqlite3")
+    cache.put_filings([filing])
+    service = OpenFilingsService(cache)
+
+    async def download(_filing: Filing) -> SourceDocument:
+        return SourceDocument(
+            data=pdf_bytes,
+            media_type="application/pdf",
+            source_url=filing.source_url,
+        )
+
+    monkeypatch.setattr(service, "_download_document", download)
+    monkeypatch.setattr(
+        server.OpenFilingsService, "from_settings", staticmethod(lambda: service)
+    )
+
+    response = await server.filing_financials(filing.id)
+    cache.close()
+
+    assert response["success"] is True
+    balance = next(
+        item
+        for item in response["data"]["statements"]
+        if item["statement_type"] == "balance_sheet"
+    )
+    values_by_code = {item["code"]: item["values"] for item in balance["line_items"]}
+    noncurrent_liabilities = values_by_code["noncurrent_liabilities"]
+    assert noncurrent_liabilities["instant 2025-12-31"] == "10122923000"
+    assert noncurrent_liabilities["instant 2024-12-31"] == "11461649000"
 
 
 def _financials(filing: Filing) -> FilingFinancials:
