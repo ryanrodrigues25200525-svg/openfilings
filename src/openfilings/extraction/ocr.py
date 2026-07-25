@@ -20,7 +20,7 @@ def ocr_pdf_to_markdown(
     *,
     language: str = "eng",
     dpi: int = 200,
-    max_pages: int = 250,
+    max_pages: int = 500,
     executable: str = "tesseract",
     page_timeout_seconds: float = 120.0,
     command_runner: CommandRunner | None = None,

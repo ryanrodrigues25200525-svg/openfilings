@@ -26,7 +26,7 @@ class Settings:
     ocr_mode: OcrMode = "auto"
     ocr_language: str = "eng"
     ocr_dpi: int = 200
-    ocr_max_pages: int = 250
+    ocr_max_pages: int = 500
     ocr_executable: str = "tesseract"
     cache_max_mb: int = 512
 
@@ -50,7 +50,7 @@ class Settings:
             ocr_mode=cast(OcrMode, ocr_mode),
             ocr_language=ocr_language,
             ocr_dpi=_bounded_int_env("OPENFILINGS_OCR_DPI", 200, 72, 600),
-            ocr_max_pages=_bounded_int_env("OPENFILINGS_OCR_MAX_PAGES", 250, 1, 2_000),
+            ocr_max_pages=_bounded_int_env("OPENFILINGS_OCR_MAX_PAGES", 500, 1, 2_000),
             ocr_executable=os.getenv(
                 "OPENFILINGS_TESSERACT_EXECUTABLE", "tesseract"
             ).strip()
