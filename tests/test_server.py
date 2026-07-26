@@ -197,6 +197,7 @@ async def test_mcp_registers_progressive_disclosure_tools() -> None:
         "company_facts",
         "major_holders_list",
         "major_holders_search",
+        "insider_dealings_list",
         "sedar_filing_import",
         "filing_outline",
         "filing_sections",

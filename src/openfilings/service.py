@@ -42,6 +42,7 @@ from openfilings.extraction.document import OcrConverter, extract_document
 from openfilings.extraction.html import html_to_markdown
 from openfilings.extraction.ocr import ocr_pdf_to_markdown, tesseract_available
 from openfilings.extraction.pdf import pdf_to_markdown
+from openfilings.insider import extract_nsm_insider_dealings
 from openfilings.models import (
     SUPPORTED_SOURCE_NAMES,
     CachePruneResult,
@@ -55,6 +56,7 @@ from openfilings.models import (
     FinancialLineItem,
     FinancialStatement,
     FinancialValue,
+    InsiderDealing,
     MajorHolderNotification,
     OcrMode,
     ReportingPeriod,
@@ -88,6 +90,7 @@ _NSM_CATEGORY_TYPE_CODES: dict[str, list[str]] = {
     "accounts": ["ACS"],
     "insider": ["DSH"],
     "major_holdings": ["HOL"],
+    "pdmr_dealings": ["DSH"],
 }
 _FACTS_STATEMENT_TITLES: dict[StatementType, str] = {
     "income_statement": "Income statement",
@@ -973,12 +976,64 @@ class OpenFilingsService:
             )
         return holder
 
+    async def get_insider_dealings(self, filing_id: str) -> list[InsiderDealing]:
+        """Parse one FCA DSH filing's standard UK MAR notification tables."""
+
+        filing = self._cache.get_filing(filing_id)
+        if filing is None:
+            filing = await self._resolve_filing(filing_id)
+        if filing.source != "fca_nsm" or filing.filing_type != "DSH":
+            raise ExtractionError(
+                "Structured insider-dealing extraction is only available for "
+                'FCA NSM category="pdmr_dealings" filings.'
+            )
+        document = await self._download_document(filing)
+        html = document.data.decode("utf-8", errors="replace")
+        dealings = extract_nsm_insider_dealings(html, filing)
+        if not dealings:
+            raise ExtractionError(
+                f"Could not parse a UK MAR PDMR notification from {filing_id}."
+            )
+        return dealings
+
+    async def list_insider_dealings(
+        self,
+        company_id: str,
+        *,
+        limit: int = 25,
+    ) -> list[InsiderDealing]:
+        """List structured UK MAR PDMR/PCA transaction notifications."""
+
+        filings = await self.list_filings(
+            company_id,
+            category="pdmr_dealings",
+            limit=limit,
+            source="fca_nsm",
+        )
+        dealings: list[InsiderDealing] = []
+        for filing in filings:
+            try:
+                dealings.extend(await self.get_insider_dealings(filing.id))
+            except (ExtractionError, DocumentUnavailableError, SourceError):
+                continue
+            if len(dealings) >= limit:
+                break
+        return dealings[:limit]
+
     async def list_major_holders(
         self, company_id: str, *, limit: int = 25
     ) -> list[MajorHolderNotification]:
-        """List and parse a UK issuer's major-shareholding filings - who
-        holds >5% of this company, per TR-1 notification."""
+        """List structured major-shareholding disclosures or positions."""
 
+        if self._is_cvm_company_id(company_id):
+            if self._cvm is None:
+                raise ConfigurationError("The CVM source is not configured.")
+            return await self._cvm.list_major_holders(company_id, limit=limit)
+        if self._nsm_identifier(company_id) is None:
+            raise ConfigurationError(
+                "Expected a UK company ID shaped like uk_lei_{LEI} or a Brazilian "
+                "company ID shaped like br_cvm_{numeric_code}."
+            )
         filings = await self.list_filings(
             company_id, category="major_holdings", limit=limit, source="fca_nsm"
         )
@@ -997,32 +1052,42 @@ class OpenFilingsService:
         scan_limit: int = 200,
         limit: int = 25,
     ) -> list[MajorHolderNotification]:
-        """A bounded, 13F-style reverse lookup: what has this holder
-        disclosed a >5% position in, across UK issuers? NSM's search index
-        doesn't carry the holder's identity (it's only in each filing's
-        document body), so this scans the ``scan_limit`` most recent TR-1
-        filings across every issuer and parses each one - not the full
-        historical record, and the cost scales with ``scan_limit``."""
+        """Search holder positions across FCA NSM and CVM public disclosures."""
 
-        if self._nsm is None:
-            raise ConfigurationError("The FCA NSM source is not configured.")
         clean_name = self._normalize_holder_name(holder_name)
         if not clean_name:
             return []
-        filings = await self._nsm.search_disclosures(
-            None, type_codes=["HOL"], limit=scan_limit
-        )
         matches: list[MajorHolderNotification] = []
-        for filing in filings:
-            try:
-                holder = await self.get_major_holder(filing.id)
-            except (ExtractionError, DocumentUnavailableError, SourceError):
-                continue
-            if clean_name in self._normalize_holder_name(holder.holder_name):
-                matches.append(holder)
-                if len(matches) >= limit:
-                    break
-        return matches
+        if self._nsm is not None:
+            filings = await self._nsm.search_disclosures(
+                None, type_codes=["HOL"], limit=scan_limit
+            )
+            for filing in filings:
+                try:
+                    holder = await self.get_major_holder(filing.id)
+                except (ExtractionError, DocumentUnavailableError, SourceError):
+                    continue
+                if clean_name in self._normalize_holder_name(holder.holder_name):
+                    matches.append(holder)
+        if self._cvm is not None:
+            matches.extend(
+                await self._cvm.search_major_holders(holder_name, limit=limit)
+            )
+        if self._nsm is None and self._cvm is None:
+            raise ConfigurationError(
+                "Neither the FCA NSM nor CVM source is configured."
+            )
+        matches.sort(
+            key=lambda holder: (
+                holder.position_date
+                or holder.date_notified
+                or holder.date_crossed
+                or date.min,
+                holder.filing_id,
+            ),
+            reverse=True,
+        )
+        return matches[:limit]
 
     @staticmethod
     def _normalize_holder_name(value: str) -> str:

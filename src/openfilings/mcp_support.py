@@ -14,6 +14,7 @@ from openfilings.models import (
     Filing,
     FilingFinancials,
     FinancialStatement,
+    InsiderDealing,
     MajorHolderNotification,
     StatementType,
 )
@@ -152,6 +153,9 @@ def major_holder_summary(holder: MajorHolderNotification) -> dict[str, Any]:
             "holder_name": holder.holder_name,
             "isin": holder.isin,
             "reason": holder.reason,
+            "position_date": (
+                holder.position_date.isoformat() if holder.position_date else None
+            ),
             "date_crossed": (
                 holder.date_crossed.isoformat() if holder.date_crossed else None
             ),
@@ -163,6 +167,38 @@ def major_holder_summary(holder: MajorHolderNotification) -> dict[str, Any]:
             ),
             "total_voting_rights": holder.total_voting_rights,
             "source_url": holder.source_url,
+        }
+    )
+
+
+def insider_dealing_summary(dealing: InsiderDealing) -> dict[str, Any]:
+    return _without_none(
+        {
+            "filing_id": dealing.filing_id,
+            "company_id": dealing.company_id,
+            "issuer_name": dealing.issuer_name,
+            "person_name": dealing.person_name,
+            "position": dealing.position,
+            "initial_or_amendment": dealing.initial_or_amendment,
+            "instrument": dealing.instrument,
+            "isin": dealing.isin,
+            "transaction_natures": list(dealing.transaction_natures),
+            "price_volume": [
+                _without_none(
+                    {
+                        "price": str(lot.price) if lot.price is not None else None,
+                        "currency": lot.currency,
+                        "volume": lot.volume,
+                    }
+                )
+                for lot in dealing.price_volume
+            ],
+            "transaction_dates": [
+                transaction_date.isoformat()
+                for transaction_date in dealing.transaction_dates
+            ],
+            "places": list(dealing.places),
+            "source_url": dealing.source_url,
         }
     )
 

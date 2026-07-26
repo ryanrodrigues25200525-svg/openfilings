@@ -326,9 +326,7 @@ class CompanyFacts(DomainModel):
 
 
 class MajorHolderNotification(DomainModel):
-    """One TR-1-style major-shareholding notification, parsed from a
-    ``category="major_holdings"`` filing's document body into structured
-    fields instead of a bare filing pointer."""
+    """One major-shareholding notification or regulator-published position."""
 
     filing_id: str
     company_id: str
@@ -336,10 +334,35 @@ class MajorHolderNotification(DomainModel):
     holder_name: str
     isin: str | None = None
     reason: str | None = None
+    position_date: date | None = None
     date_crossed: date | None = None
     date_notified: date | None = None
     total_percent: Decimal | None = None
     total_voting_rights: int | None = None
+    source_url: str
+
+
+class InsiderPriceVolume(DomainModel):
+    price: Decimal | None = None
+    currency: str | None = None
+    volume: int | None = None
+
+
+class InsiderDealing(DomainModel):
+    """One UK MAR PDMR/PCA notification parsed from an FCA NSM filing."""
+
+    filing_id: str
+    company_id: str
+    issuer_name: str
+    person_name: str
+    position: str | None = None
+    initial_or_amendment: str | None = None
+    instrument: str | None = None
+    isin: str | None = None
+    transaction_natures: tuple[str, ...] = ()
+    price_volume: tuple[InsiderPriceVolume, ...] = ()
+    transaction_dates: tuple[date, ...] = ()
+    places: tuple[str, ...] = ()
     source_url: str
 
 

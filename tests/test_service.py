@@ -83,12 +83,17 @@ async def test_nsm_insider_and_major_holdings_categories_map_to_type_codes(
         await service.list_filings(
             "uk_lei_2138002P5RNKC5W2JZ46", category="major_holdings"
         )
+        await service.list_filings(
+            "uk_lei_2138002P5RNKC5W2JZ46", category="pdmr_dealings"
+        )
         cache.close()
 
-    insider_criteria = payloads[-2]["criteriaObj"]["criteria"]
-    major_holdings_criteria = payloads[-1]["criteriaObj"]["criteria"]
+    insider_criteria = payloads[-3]["criteriaObj"]["criteria"]
+    major_holdings_criteria = payloads[-2]["criteriaObj"]["criteria"]
+    pdmr_criteria = payloads[-1]["criteriaObj"]["criteria"]
     assert {"name": "type_code", "value": ["dsh"]} in insider_criteria
     assert {"name": "type_code", "value": ["hol"]} in major_holdings_criteria
+    assert {"name": "type_code", "value": ["dsh"]} in pdmr_criteria
 
 
 @pytest.mark.asyncio
@@ -265,6 +270,30 @@ async def test_major_holders_pipeline_lists_and_reverse_searches(tmp_path) -> No
     assert no_matches == []
 
 
+@pytest.mark.asyncio
+async def test_insider_dealings_pipeline_lists_structured_mar_forms(tmp_path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            return httpx.Response(200, json=_nsm_dsh_search_response())
+        if request.url.path.endswith("/pdmar.html"):
+            return httpx.Response(200, text=_pdmar_fixture())
+        raise AssertionError(f"Unexpected request: {request.url}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        nsm = FcaNsmClient(client=http_client)
+        cache = SQLiteCache(tmp_path / "cache.sqlite3")
+        service = OpenFilingsService(cache, nsm_source=nsm)
+
+        dealings = await service.list_insider_dealings(
+            "uk_lei_213800EC7997ZBLZJH69", limit=5
+        )
+        cache.close()
+
+    assert len(dealings) == 1
+    assert dealings[0].person_name == "Nikki Grady-Smith"
+    assert dealings[0].transaction_dates == (date(2026, 3, 23),)
+
+
 def _nsm_hol_search_response() -> dict[str, object]:
     return {
         "hits": {
@@ -287,8 +316,35 @@ def _nsm_hol_search_response() -> dict[str, object]:
     }
 
 
+def _nsm_dsh_search_response() -> dict[str, object]:
+    return {
+        "hits": {
+            "hits": [
+                {
+                    "_source": {
+                        "disclosure_id": "pdmar-disclosure",
+                        "company": "Rolls-Royce Holdings plc",
+                        "lei": "213800EC7997ZBLZJH69",
+                        "type": "Director/PDMR Shareholding",
+                        "headline": "Director/PDMR Shareholding",
+                        "type_code": "DSH",
+                        "download_link": "NSM/RNS/pdmar.html",
+                        "publication_date": "2026-03-24T16:22:27Z",
+                        "document_date": "2026-03-24T16:22:27Z",
+                    }
+                }
+            ]
+        }
+    }
+
+
 def _tr1_fixture() -> str:
     path = Path(__file__).parent / "fixtures" / "fca_nsm_tr1_holding.html"
+    return path.read_text(encoding="utf-8")
+
+
+def _pdmar_fixture() -> str:
+    path = Path(__file__).parent / "fixtures" / "fca_nsm_pdmar_dealing.html"
     return path.read_text(encoding="utf-8")
 
 

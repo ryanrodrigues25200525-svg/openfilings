@@ -20,6 +20,7 @@ from openfilings.mcp_support import (
     failure,
     filing_summary,
     financials_view,
+    insider_dealing_summary,
     major_holder_summary,
     query_excerpt,
     section_summary,
@@ -179,8 +180,7 @@ async def major_holders_list(
     company_id: str,
     limit: int = 25,
 ) -> dict[str, Any]:
-    """List a UK issuer's TR-1 major-shareholding notifications, parsed
-    into structured fields (holder name, position, dates)."""
+    """List structured major-holder records for a UK or Brazilian issuer."""
 
     try:
         validate_limit(limit, maximum=MAX_METADATA_RESULTS)
@@ -202,9 +202,7 @@ async def major_holders_search(
     scan_limit: int = 200,
     limit: int = 25,
 ) -> dict[str, Any]:
-    """Bounded 13F-style reverse lookup: what has this holder disclosed a
-    >5% position in, across UK issuers? Scans the scan_limit most recent
-    TR-1 filings - not the full historical record."""
+    """Search holder positions across UK notifications and Brazilian FRE data."""
 
     try:
         validate_limit(limit, maximum=MAX_METADATA_RESULTS)
@@ -223,6 +221,30 @@ async def major_holders_search(
             next_steps=(
                 "Increase scan_limit to search further back if nothing was found.",
             ),
+        )
+    except (OpenFilingsError, ValueError) as exc:
+        return _request_failure(exc)
+
+
+@mcp.tool()
+async def insider_dealings_list(
+    company_id: str,
+    limit: int = 25,
+) -> dict[str, Any]:
+    """List UK MAR director/PDMR/PCA dealings parsed into structured fields."""
+
+    try:
+        validate_limit(limit, maximum=MAX_METADATA_RESULTS)
+        async with OpenFilingsService.from_settings() as service:
+            dealings = await service.list_insider_dealings(
+                company_id,
+                limit=limit,
+            )
+        return success(
+            {
+                "dealings": [insider_dealing_summary(dealing) for dealing in dealings],
+                "count": len(dealings),
+            }
         )
     except (OpenFilingsError, ValueError) as exc:
         return _request_failure(exc)
