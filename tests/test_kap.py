@@ -53,6 +53,7 @@ async def test_list_filings_pages_backward_and_filters_to_financial_reports() ->
         body = _json_body(request)
         requested_ranges.append((body["fromDate"], body["toDate"]))
         assert body["mkkMemberOidList"] == ["4028e4a240ee866c0140f1fad94e0047"]
+        assert body["disclosureClass"] == "FR"
         if len(requested_ranges) == 1:
             return httpx.Response(200, json=[_financial_report_row(), _other_row()])
         return httpx.Response(200, json=[])
@@ -92,6 +93,56 @@ async def test_list_filings_without_accounts_category_keeps_other_disclosures() 
     other = next(f for f in filings if f.id == "tr_kap_1621228")
     assert other.category == "disclosure"
     assert other.period_end is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("category", "expected_class", "expected_id", "expected_type"),
+    [
+        ("material_event", "ODA", "tr_kap_1621228", "oda"),
+        ("corporate_action", "", "tr_kap_1621300", "ca"),
+    ],
+)
+async def test_list_filings_maps_public_kap_taxonomy(
+    category: str,
+    expected_class: str,
+    expected_id: str,
+    expected_type: str,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = _json_body(request)
+        assert body["disclosureClass"] == expected_class
+        return httpx.Response(
+            200,
+            json=[_financial_report_row(), _other_row(), _corporate_action_row()],
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = KapClient(client=http)
+        filings = await client.list_filings(
+            "tr_kap_4028e4a240ee866c0140f1fad94e0047",
+            category=category,
+        )
+
+    assert [filing.id for filing in filings] == [expected_id]
+    assert filings[0].category == category
+    assert filings[0].filing_type == expected_type
+
+
+@pytest.mark.asyncio
+async def test_list_filings_rejects_unknown_kap_category_without_request() -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _: (_ for _ in ()).throw(AssertionError("should not request"))
+        )
+    ) as http:
+        client = KapClient(client=http)
+        filings = await client.list_filings(
+            "tr_kap_4028e4a240ee866c0140f1fad94e0047",
+            category="dividend",
+        )
+
+    assert filings == []
 
 
 @pytest.mark.asyncio
@@ -244,6 +295,21 @@ def _other_row() -> dict[str, object]:
         "period": None,
         "disclosureIndex": 1621228,
         "attachmentCount": 1,
+    }
+
+
+def _corporate_action_row() -> dict[str, object]:
+    return {
+        "publishDate": "27.06.2026 10:15:00",
+        "kapTitle": "DENİZ GAYRİMENKUL YATIRIM ORTAKLIĞI A.Ş.",
+        "disclosureClass": "ODA",
+        "disclosureType": "CA",
+        "summary": "Kar Payi Dagitim Islemlerine Iliskin Bildirim",
+        "subject": "Kar Payi Dagitim Islemlerine Iliskin Bildirim",
+        "year": None,
+        "period": None,
+        "disclosureIndex": 1621300,
+        "attachmentCount": 0,
     }
 
 

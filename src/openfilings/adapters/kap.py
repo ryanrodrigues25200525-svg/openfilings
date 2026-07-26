@@ -41,6 +41,11 @@ _DISCLOSURE_INDEX_PATTERN = re.compile(r"^\d{1,10}$")
 _WINDOW_DAYS = 365
 _LOOKBACK_WINDOWS = 3
 _FINANCIAL_REPORT_SUBJECT = "Finansal Rapor"
+_CATEGORY_CODES: dict[str, tuple[str, str]] = {
+    "accounts": ("FR", "FR"),
+    "material_event": ("ODA", "ODA"),
+    "corporate_action": ("", "CA"),
+}
 _JAVA_ARRAY_MAGIC = b"\xac\xed\x00\x05"
 # The disclosure's own "period" field (1-4) names the reporting quarter;
 # KAP has no fiscal-year-end other than the calendar year for BIST filers.
@@ -90,7 +95,18 @@ class KapClient(RetryingClient):
     ) -> list[Filing]:
         oid = self.normalize_company_oid(company_id)
         company_id_norm = f"tr_kap_{oid}"
-        want_accounts_only = category is not None and category.casefold() == "accounts"
+        normalized_category = category.casefold() if category else None
+        if normalized_category not in {
+            None,
+            "accounts",
+            "disclosure",
+            "material_event",
+            "corporate_action",
+        }:
+            return []
+        requested_class, requested_type = _CATEGORY_CODES.get(
+            normalized_category or "", ("", "")
+        )
         window_end = date.today()
         filings: list[Filing] = []
         for _ in range(_LOOKBACK_WINDOWS):
@@ -102,6 +118,7 @@ class KapClient(RetryingClient):
                     "fromDate": window_start.isoformat(),
                     "toDate": window_end.isoformat(),
                     "mkkMemberOidList": [oid],
+                    "disclosureClass": requested_class,
                     "subjectList": [],
                 },
             )
@@ -120,10 +137,23 @@ class KapClient(RetryingClient):
                     row.get("subject") == _FINANCIAL_REPORT_SUBJECT
                     and row.get("disclosureType") == "FR"
                 )
-                if want_accounts_only and not is_financial_report:
+                if normalized_category == "accounts" and not is_financial_report:
+                    continue
+                if (
+                    normalized_category == "material_event"
+                    and row.get("disclosureType") != requested_type
+                ):
+                    continue
+                if (
+                    normalized_category == "corporate_action"
+                    and row.get("disclosureType") != requested_type
+                ):
                     continue
                 filing = self._filing_from_row(
-                    company_id_norm, row, is_financial_report=is_financial_report
+                    company_id_norm,
+                    row,
+                    is_financial_report=is_financial_report,
+                    category=normalized_category,
                 )
                 if filing is not None:
                     filings.append(filing)
@@ -269,7 +299,12 @@ class KapClient(RetryingClient):
         )
 
     def _filing_from_row(
-        self, company_id: str, row: dict[str, object], *, is_financial_report: bool
+        self,
+        company_id: str,
+        row: dict[str, object],
+        *,
+        is_financial_report: bool,
+        category: str | None,
     ) -> Filing | None:
         index = row.get("disclosureIndex")
         if not isinstance(index, int):
@@ -281,14 +316,28 @@ class KapClient(RetryingClient):
         subject = _text(row.get("subject"))
         period_end = _period_end(row) if is_financial_report else None
         has_attachment = bool(row.get("attachmentCount"))
+        filing_category = (
+            "accounts"
+            if is_financial_report
+            else category
+            if category in {"material_event", "corporate_action"}
+            else "disclosure"
+        )
+        filing_type = (
+            "financial_report"
+            if is_financial_report
+            else _text(row.get("disclosureType")).casefold()
+            if category in {"material_event", "corporate_action"}
+            else "disclosure"
+        )
         return Filing(
             id=f"tr_kap_{index}",
             company_id=company_id,
             source="kap",
             source_id=str(index),
             title=summary or subject or "KAP disclosure",
-            category="accounts" if is_financial_report else "disclosure",
-            filing_type="financial_report" if is_financial_report else "disclosure",
+            category=filing_category,
+            filing_type=filing_type,
             filing_date=published_at.date(),
             published_at=published_at,
             period_end=period_end,
