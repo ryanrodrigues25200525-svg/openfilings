@@ -106,6 +106,61 @@ def fake_service(monkeypatch: pytest.MonkeyPatch) -> _FakeService:
     return service
 
 
+@pytest.fixture
+def real_html_service(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> tuple[OpenFilingsService, Filing]:
+    filing = Filing(
+        id="mx_bmv_filing_real_html",
+        company_id="mx_bmv_real_html",
+        source="bmv",
+        source_id="real_html",
+        title="2025 Annual Report",
+        category="accounts",
+        filing_type="annual",
+        filing_date=date(2026, 4, 28),
+        period_end=date(2025, 12, 31),
+        document_id="https://example.test/annual-report.html",
+        media_type="text/html",
+        issuer_name="Example Industrials, S.A.B. de C.V.",
+        source_url="https://example.test/annual-report.html",
+    )
+    html = (
+        b"<!doctype html><html><body>"
+        b"<h1>Annual Report</h1>"
+        b"<p>Company overview and strategy for long-term growth.</p>"
+        b"<h2>Risk Factors</h2>"
+        b"<p>Supply chain disruption and currency volatility may affect operations. "
+        + (b"Climate regulation may increase compliance costs. " * 8)
+        + b"</p>"
+        b"<h2>Financial Results</h2>"
+        b"<p>Revenue increased by 12 percent while operating costs remained "
+        b"controlled. Net income improved during the year.</p>"
+        b"<script>confidential_tracking_payload</script>"
+        b"</body></html>"
+    )
+    cache = SQLiteCache(tmp_path / "real-html-cache.sqlite3")
+    request.addfinalizer(cache.close)
+    cache.put_filings([filing])
+    service = OpenFilingsService(cache)
+
+    async def download(_filing: Filing) -> SourceDocument:
+        assert _filing == filing
+        return SourceDocument(
+            data=html,
+            media_type="text/html",
+            source_url=filing.source_url,
+        )
+
+    monkeypatch.setattr(service, "_download_document", download)
+    monkeypatch.setattr(
+        server.OpenFilingsService,
+        "from_settings",
+        staticmethod(lambda: service),
+    )
+    return service, filing
+
+
 @pytest.mark.asyncio
 async def test_metadata_tools_return_compact_guided_responses(
     fake_service: _FakeService,
@@ -216,6 +271,78 @@ async def test_outline_read_and_search_use_progressive_disclosure(
     assert read["data"]["title"] == "Risk Factors"
     assert search["data"]["results"][0]["title"] == "Financial Statements"
     assert len(search["data"]["results"][0]["snippet"]) <= 500
+
+
+@pytest.mark.asyncio
+async def test_filing_markdown_converts_real_html_end_to_end(
+    real_html_service: tuple[OpenFilingsService, Filing],
+) -> None:
+    """Mocked FilingContent cannot catch failures in HTML cleanup, Markdown
+    conversion, quality assessment, or the service-added provenance header.
+    This calls the real MCP tool through all of those stages, substituting
+    only the network download with representative filing HTML."""
+    _, filing = real_html_service
+
+    response = await server.filing_markdown(filing.id)
+
+    assert response["success"] is True
+    assert response["data"]["extraction_method"] == "markdownify"
+    assert response["data"]["quality"]["status"] == "good"
+    assert "# Annual Report" in response["data"]["markdown"]
+    assert "## Risk Factors" in response["data"]["markdown"]
+    assert "confidential_tracking_payload" not in response["data"]["markdown"]
+
+
+@pytest.mark.asyncio
+async def test_filing_search_ranks_sections_from_real_html_pipeline(
+    real_html_service: tuple[OpenFilingsService, Filing],
+) -> None:
+    """A hand-built FilingDocument bypasses both HTML heading conversion and
+    section construction, so it cannot reveal when real converted headings
+    stop being searchable. This test builds the searchable document through
+    the real service and exercises the MCP ranking and excerpt path."""
+    _, filing = real_html_service
+
+    response = await server.filing_search(
+        filing.id,
+        query="revenue operating costs",
+        limit=2,
+        snippet_chars=200,
+    )
+
+    assert response["success"] is True
+    assert response["data"]["results"][0]["title"] == "Financial Results"
+    assert response["data"]["results"][0]["matched_terms"] == [
+        "costs",
+        "operating",
+        "revenue",
+    ]
+    assert (
+        "Revenue increased by 12 percent" in response["data"]["results"][0]["snippet"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_filing_read_returns_section_from_real_html_pipeline(
+    real_html_service: tuple[OpenFilingsService, Filing],
+) -> None:
+    """The mocked read test starts after document parsing has already
+    succeeded. Using real HTML here verifies that conversion produces a
+    named section which the actual MCP read tool can resolve and paginate."""
+    _, filing = real_html_service
+
+    response = await server.filing_read(
+        filing.id,
+        section="risk factors",
+        max_chars=300,
+    )
+
+    assert response["success"] is True
+    assert response["data"]["title"] == "Risk Factors"
+    assert response["data"]["markdown"].startswith("## Risk Factors")
+    assert "Supply chain disruption" in response["data"]["markdown"]
+    assert response["data"]["truncated"] is True
+    assert response["data"]["next_offset"] == 300
 
 
 @pytest.mark.asyncio
