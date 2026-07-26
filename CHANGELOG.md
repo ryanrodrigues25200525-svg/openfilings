@@ -113,9 +113,63 @@ All notable changes to OpenFilings are documented in this file.
   full historical record. Exposed via the CLI (`major-holders`,
   `search-major-holders`) and MCP (`major_holders_list`,
   `major_holders_search`).
+- `major_holders_list`/`major_holders_search` now also cover Brazil: CVM's
+  yearly Formulário de Referência "posição acionária" archive (the same
+  `structured_archive`/`DADOS` yearly-ZIP convention already used for
+  dfp/itr/vlmo) is parsed into the same `MajorHolderNotification` shape as
+  the existing UK TR-1 path, routed automatically by the company id's
+  market prefix. Live-verified against a real Petrobras (`br_cvm_009512`)
+  shareholder list.
+- Added structured parsing for UK MAR Article 19 PDMR/PCA dealing
+  notifications (`openfilings.insider.extract_nsm_insider_dealings`),
+  exposed as a new `insider_dealings_list` MCP tool - distinct from the
+  existing `filings_list(category="insider")`, which only lists the raw
+  DSH filing metadata; this parses each one's document body into person
+  name, position, instrument/ISIN, transaction nature(s), price/volume
+  lots, dates, and place(s). Verified against 8 real live FCA NSM DSH
+  filings across different filing agents (RNS, EQS, PRN).
+- Added `category="dividend"` to SGX, backed by the same
+  `api.sgx.com/announcements` endpoint SGXNet's own frontend uses,
+  including the CMS validator token exchange it requires. The token
+  exchange itself succeeds live; the announcements endpoint currently
+  returns an Akamai edge WAF 403 from this project's network - the same
+  class of block already documented for ASX above, not a code defect.
+  Additive and opt-in: the existing default `category="accounts"` path is
+  unaffected.
+- Added `category="material_event"` (KAP's ODA disclosure class) and
+  `category="corporate_action"` (CA) to Turkey's KAP connector, alongside
+  the existing accounts/disclosure split. Live-verified against real
+  Turkcell filings.
 
 ### Fixed
 
+- CVM major-holder data: the first implementation read `Pct_Total`/
+  `Qtd_Total` from the FRE archive, which don't exist in the live CSV
+  (its real columns are `Percentual_Total_Acoes_Circulacao`/
+  `Quantidade_Total_Acoes_Circulacao`) - every result would have had
+  silently empty `total_percent`/`total_voting_rights`. Found by
+  downloading the real archive before committing, not from the mocked
+  test suite alone.
+- UK PDMR dealing extraction: the first implementation scored 1 of 8 on
+  real live FCA NSM DSH filings despite passing its own hand-written
+  fixture. Three real bugs, all found by testing against live filings:
+  word-exported HTML sometimes splits one word across adjacent `<span>`
+  elements, and the original per-node-stripped text join dropped
+  legitimate spaces while merging fragments into garbage tokens;
+  different filing agents word standard-form labels inconsistently
+  around the article "the" ("Description of the financial instrument"
+  vs. "Description of financial instrument"), so normalization now drops
+  "the" as a stopword on both sides of every label comparison; and
+  EQS-distributed filings prepend one cell containing the entire
+  announcement as prose - itself quoting every field label - ahead of
+  the real structured rows in the same table, which matched first and
+  resolved every section to the wrong index. After these fixes, 7 of 8
+  real filings parse correctly; the 8th (Foresight Enterprise VCT)
+  correctly declines since it's a genuinely different notification
+  format, not a MAR Art19 transaction table. One known gap remains:
+  filings covering multiple lots/tranches for one person can still
+  produce duplicated or misaligned transaction fields, since each
+  dealing is parsed as a single flat record rather than split per lot.
 - Found via a live end-to-end test pass across every supported market:
   CVM's balance sheet was missing `total_liabilities` (only
   `current_liabilities`/`noncurrent_liabilities` were present) - CVM's
