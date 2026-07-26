@@ -643,6 +643,56 @@ def test_heading_at_matches_colombian_estados_del_resultado() -> None:
     assert _statement_type(lines) == "income_statement"
 
 
+def test_colombian_income_statement_ignores_later_auditor_report_year() -> None:
+    """Grupo Argos SFC filing 125070 reports 2025/2024 values, but the
+    auditor's March 2026 report date appears before those column headings.
+    The aligned-text path must not shift the correct values forward one
+    year by mistaking that signature date for a reporting column."""
+    financials = extract_pdf_text_financials(
+        (
+            """
+            Grupo Argos S.A.
+            ESTADOS DEL RESULTADO SEPARADO
+            Años terminados el 31 de diciembre
+            Jorge Mario Velásquez Jaramillo
+            Presidente
+            (Véase informe del 2 de marzo de 2026)
+            Nota
+            2025
+            2024
+            Ingresos de actividades ordinarias
+            100
+            90
+            Costo de actividades ordinarias
+            (40)
+            (35)
+            Ganancia bruta
+            60
+            55
+            """,
+        ),
+        _filing(
+            period_end=date(2025, 12, 31),
+            source="sfc",
+            filing_type="annual",
+        ),
+        source_url="https://example.test/grupo-argos-2025.pdf",
+        sha256="2" * 64,
+    )
+
+    income = financials.income_statement()
+    assert income is not None
+    revenue = next(item for item in income.line_items if item.code == "revenue")
+    assert [value.period.end_date for value in revenue.values] == [
+        date(2025, 12, 31),
+        date(2024, 12, 31),
+    ]
+    assert [value.value for value in revenue.values] == [
+        Decimal("100"),
+        Decimal("90"),
+    ]
+
+
 def test_definition_for_label_prefers_continuing_over_discontinued_operations() -> None:
     """A filer reporting a discontinued-operations split states the same
     subtotal label twice, scoped differently ("Utilidad Antes de Impuestos

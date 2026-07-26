@@ -719,7 +719,7 @@ def _line_items_from_text(
 ) -> tuple[FinancialLineItem, ...]:
     lines = tuple(line.strip() for line in section.splitlines() if line.strip())
     statement_type = _statement_type(lines)
-    years = _text_years(lines)
+    years = _text_years(lines, filing.period_end)
     if statement_type is None or not years:
         return ()
     multiplier = _period_multiplier(lines, years)
@@ -1295,11 +1295,19 @@ def _truncated_at_next_statement(
     return lines
 
 
-def _text_years(lines: tuple[str, ...]) -> tuple[int, ...]:
+def _text_years(
+    lines: tuple[str, ...], filing_period_end: date | None = None
+) -> tuple[int, ...]:
     years: list[int] = []
     for line in lines[:30]:
         for match in _YEAR_PATTERN.finditer(line):
             year = int(match.group(1))
+            # Grupo Argos SFC filing 125070 reports 2025/2024, but its income
+            # statement places the auditor's "2 March 2026" signature before
+            # those column headers. A year later than the known reporting
+            # date is an issuance/audit date, never a statement-value column.
+            if filing_period_end is not None and year > filing_period_end.year:
+                continue
             if year not in years:
                 years.append(year)
     return tuple(years[:2])
