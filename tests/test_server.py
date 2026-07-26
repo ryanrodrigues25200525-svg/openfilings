@@ -263,6 +263,61 @@ async def test_financials_failure_points_to_manual_extraction_fallback(
 
 
 @pytest.mark.asyncio
+async def test_financials_warns_when_the_accounting_identity_does_not_hold(
+    fake_service: _FakeService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """extraction can "succeed" (return a number for every requested line
+    item) while still being wrong - a PDF-heuristic extractor matching the
+    wrong row produces a plausible-looking figure, not an error. The
+    deterministic accounting-identity check (finvariant) is the signal
+    that tells the calling agent to verify before trusting a result that
+    technically returned data."""
+    period = ReportingPeriod(
+        id="instant2025", end_date=date(2025, 12, 31), kind="instant"
+    )
+    inconsistent_balance_sheet = FinancialStatement(
+        statement_type="balance_sheet",
+        title="Balance Sheet",
+        line_items=(
+            FinancialLineItem(
+                code="total_assets",
+                name="Total assets",
+                concept="pdf-label:total-assets",
+                values=(FinancialValue(period=period, value=Decimal("100")),),
+            ),
+            FinancialLineItem(
+                code="total_liabilities",
+                name="Total liabilities",
+                concept="pdf-label:total-liabilities",
+                values=(FinancialValue(period=period, value=Decimal("60")),),
+            ),
+            FinancialLineItem(
+                code="total_equity",
+                name="Total equity",
+                concept="pdf-label:total-equity",
+                values=(FinancialValue(period=period, value=Decimal("30")),),
+            ),
+        ),
+    )
+    broken = fake_service.financials.model_copy(
+        update={"statements": (inconsistent_balance_sheet,)}
+    )
+
+    async def get_broken(*_: object, **__: object) -> FilingFinancials:
+        return broken
+
+    monkeypatch.setattr(fake_service, "get_filing_financials", get_broken)
+
+    response = await server.filing_financials(fake_service.filing.id)
+
+    assert response["success"] is True
+    validation = response["data"]["validation"]
+    assert validation["ok"] is False
+    assert validation["findings"]
+    assert any("accounting-identity check" in step for step in response["next_steps"])
+
+
+@pytest.mark.asyncio
 async def test_filing_financials_extracts_a_real_pdf_end_to_end(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

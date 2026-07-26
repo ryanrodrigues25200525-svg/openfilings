@@ -35,8 +35,27 @@ _PLACEHOLDER_CELL_VALUES = frozenset({"-", "\N{EM DASH}", "\N{EN DASH}", "n/a", 
 _MAX_CONSECUTIVE_NON_NUMERIC_LINES = 2
 # A grand total describes the entity's full scope - a note reusing the same
 # label (e.g. a structured-entity or subsidiary disclosure) can only be a
-# subset of it, never larger.
-_SCOPE_SUPERSET_CODES = frozenset({"total_assets", "total_liabilities", "total_equity"})
+# subset of it, never larger. The same reasoning applies to the current/
+# non-current subtotals: a filer that reports both standalone ("separate")
+# and consolidated statements for the same fiscal year (common in
+# Colombia) can have BOTH scopes' sections tie on period count. Without
+# these in the same superset set as the "total_" codes, total_assets could
+# be selected from the (larger) consolidated scope while current_assets/
+# noncurrent_assets default to "first found" from the (smaller) standalone
+# scope - producing an internally inconsistent balance sheet where
+# current + non-current no longer sums to the total, even though each
+# individual figure is a real, correctly-extracted number from the filing.
+_SCOPE_SUPERSET_CODES = frozenset(
+    {
+        "total_assets",
+        "total_liabilities",
+        "total_equity",
+        "current_assets",
+        "noncurrent_assets",
+        "current_liabilities",
+        "noncurrent_liabilities",
+    }
+)
 # A properly presented balance sheet never reports these as negative - a
 # negative match is a sign the scan landed on an unrelated note (a cash-
 # flow reconciliation adjustment, an impairment/amortization movement)

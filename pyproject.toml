@@ -9,6 +9,7 @@ description = "Search, parse, and normalize public filings across global markets
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "finvariant>=0.1,<0.2",
   "httpx>=0.28,<1",
   "markdownify>=1.2,<2",
   "mcp>=1.27,<2",

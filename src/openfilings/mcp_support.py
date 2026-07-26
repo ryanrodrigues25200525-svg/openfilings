@@ -17,6 +17,7 @@ from openfilings.models import (
     MajorHolderNotification,
     StatementType,
 )
+from openfilings.validation import validate_financials, validation_view
 
 MAX_METADATA_RESULTS = 50
 MAX_MARKDOWN_CHARS = 24_000
@@ -218,7 +219,7 @@ def financials_view(
         for statement in financials.statements
         if selected_types is None or statement.statement_type in selected_types
     ]
-    return {
+    view: dict[str, Any] = {
         "filing_id": financials.filing_id,
         "company_id": financials.company_id,
         "extraction_method": financials.extraction_method,
@@ -233,6 +234,10 @@ def financials_view(
             for statement in selected
         ],
     }
+    validation = validation_view(validate_financials(financials))
+    if validation is not None:
+        view["validation"] = validation
+    return view
 
 
 def company_facts_view(

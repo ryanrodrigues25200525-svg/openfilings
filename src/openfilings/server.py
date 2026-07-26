@@ -468,19 +468,26 @@ async def filing_financials(
                 filing_id,
                 refresh=refresh,
             )
-        return success(
-            financials_view(
-                financials,
-                statements=statements,
-                periods=periods,
-                detail=detail,
-                max_line_items=max_line_items,
-            ),
-            next_steps=(
-                "Request only the needed statement and reduce periods or line items "
-                "when a smaller response is sufficient.",
-            ),
+        view = financials_view(
+            financials,
+            statements=statements,
+            periods=periods,
+            detail=detail,
+            max_line_items=max_line_items,
         )
+        next_steps = [
+            "Request only the needed statement and reduce periods or line items "
+            "when a smaller response is sufficient.",
+        ]
+        validation = view.get("validation")
+        if validation is not None and not validation["ok"]:
+            next_steps.append(
+                "The extracted statements failed a deterministic accounting-"
+                "identity check (see 'validation.findings') - this figure may "
+                "be wrong, not just incomplete. Verify with filing_search or "
+                "filing_markdown before relying on it."
+            )
+        return success(view, next_steps=next_steps)
     except FinancialsUnavailableError as exc:
         return failure(
             str(exc),

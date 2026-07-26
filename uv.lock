@@ -248,6 +248,15 @@ wheels = [
 ]
 
 [[package]]
+name = "finvariant"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ca/fa/87f6c540602144543cca481da5544b5400417ef4153ab93ea14648ec4c2d/finvariant-0.1.0.tar.gz", hash = "sha256:aa3cf507573c142ce33f90300444b699a663b8ded566fd2b9ebbbe01851983ed", size = 14077, upload-time = "2026-06-15T09:40:07.91Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b8/fa/c712193d826664fc83086c61715bbe364ef5bcdf0677967c9575bd8b8dae/finvariant-0.1.0-py3-none-any.whl", hash = "sha256:88e7435493e0b40aa19b825e1d2de880d469e61762119abdcaa2db1634c99726", size = 12417, upload-time = "2026-06-15T09:40:06.912Z" },
+]
+
+[[package]]
 name = "flatbuffers"
 version = "25.12.19"
 source = { registry = "https://pypi.org/simple" }
@@ -597,6 +606,7 @@ name = "openfilings"
 version = "0.21.0"
 source = { editable = "." }
 dependencies = [
+    { name = "finvariant" },
     { name = "httpx" },
     { name = "markdownify" },
     { name = "mcp" },
@@ -620,6 +630,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "finvariant", specifier = ">=0.1,<0.2" },
     { name = "httpx", specifier = ">=0.28,<1" },
     { name = "markdownify", specifier = ">=1.2,<2" },
     { name = "mcp", specifier = ">=1.27,<2" },
