@@ -208,6 +208,34 @@ def test_filings_collection_and_document_sections() -> None:
     assert any(section.title == "Revenue" for section in document.search("rose"))
 
 
+def test_document_sections_filter_out_decorative_headings() -> None:
+    content = FilingContent(
+        filing_id="decorative-headings",
+        markdown=(
+            "# Annual Report\n\n"
+            "**Growing Momentum**\n\n"
+            "###### $1.1b\n\n"
+            "###### ~47 cts\n\n"
+            "# On 27 February 2023 and 28 February 2023, the Asset Co Transaction "
+            "and the Proposed Combination were completed following satisfaction of "
+            "all conditions precedent under the transaction agreements\n\n"
+            "## Balance Sheets\n\nTotal assets 1,000.\n"
+        ),
+        source_url="https://example.test/report.xhtml",
+        media_type="application/xhtml+xml",
+        extraction_method="markdownify",
+        quality=ExtractionQuality(score=100, status="good", warnings=()),
+        sha256="c" * 64,
+    )
+    document = FilingDocument.from_content(content)
+
+    titles = {section.title for section in document.sections}
+    assert "$1.1b" not in titles
+    assert "~47 cts" not in titles
+    assert not any(title.startswith("On 27 February 2023") for title in titles)
+    assert document.section("balance sheets") is not None
+
+
 def test_document_search_ranks_multi_term_section_matches() -> None:
     content = FilingContent(
         filing_id="ranked-search",

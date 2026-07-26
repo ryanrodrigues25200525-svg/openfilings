@@ -13,6 +13,15 @@ from openfilings.models import Filing, FilingContent
 
 _HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 _WORD = re.compile(r"[^\W_]+", re.UNICODE)
+_BARE_FIGURE = re.compile(r"^[~$]?[\d,.]+\s*(?:m|b|bn|k|cts|x|%)?$", re.IGNORECASE)
+# A glossy annual report's front-matter (stat callouts, pull-quotes) can
+# render with heading-level styling that a layout-aware PDF-to-markdown
+# converter classifies as a genuine '#' heading - confirmed live on a
+# Keppel filing, where "$1,100m", "18.7%", and a full page-break-wrapped
+# prose sentence ("On 27 February 2023 and 28 February 2023, the Asset Co
+# Transaction...") all rendered as top-level headings and buried the real
+# "Balance Sheets" section under dozens of decorative fragments.
+_MAX_HEADING_WORDS = 18
 
 
 class Filings(Sequence[Filing]):
@@ -94,6 +103,16 @@ class DocumentSection:
         return _HEADING.sub(r"\2", self.markdown, count=1).strip()
 
 
+def _looks_like_heading(title: str) -> bool:
+    """A bare stat callout ("$1,100m", "18.7%") carries no navigational
+    value as a section title, and a genuine sentence-length passage is
+    prose that merely inherited heading styling, not a real heading."""
+    stripped = title.strip("*_ ")
+    if _BARE_FIGURE.fullmatch(stripped):
+        return False
+    return len(stripped.split()) <= _MAX_HEADING_WORDS
+
+
 @dataclass(frozen=True, slots=True)
 class SectionSearchResult:
     """One ranked document-section match."""
@@ -137,7 +156,7 @@ class FilingDocument:
         headings: list[tuple[int, int, str]] = []
         for line_number, line in enumerate(lines):
             match = _HEADING.match(line)
-            if match:
+            if match and _looks_like_heading(match.group(2)):
                 headings.append((line_number, len(match.group(1)), match.group(2)))
 
         sections: list[DocumentSection] = []
