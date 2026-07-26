@@ -25,6 +25,7 @@ from openfilings.exceptions import (
 from openfilings.extraction.document import extract_document
 from openfilings.models import StatementType
 from openfilings.service import OpenFilingsService
+from openfilings.validation import validate_financials, validation_view
 
 app = typer.Typer(
     name="openfilings",
@@ -207,6 +208,17 @@ def financials(
         async with OpenFilingsService.from_settings() as service:
             result = await service.get_filing_financials(filing_id, refresh=refresh)
         payload = result.model_dump(mode="json")
+        validation = validation_view(validate_financials(result))
+        if validation is not None:
+            payload["validation"] = validation
+            if not validation["ok"]:
+                typer.echo(
+                    "Warning: "
+                    f"{validation['checks_failed']} accounting-identity check(s) "
+                    "failed - this filing's figures may be inconsistent "
+                    "(see 'validation' in the output).",
+                    err=True,
+                )
         if statement is not None:
             payload["statements"] = [
                 item
