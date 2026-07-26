@@ -13,6 +13,9 @@ from openfilings.storage.sqlite import SQLiteCache
 STOCKS_PATH = "/securities/v1.1/stocks"
 METADATA_PATH = "/marketmetadata/v2"
 REPORTS_PATH = "/financialreports/v1.0"
+APP_CONFIG_PATH = "/config/appconfig.json"
+CMS_PATH = "/content-api/"
+ANNOUNCEMENTS_PATH = "/announcements/v1.1/securitycode"
 DETAIL_PATH = (
     "/1.0.0/corporate-announcements/2J4PCEOQYA3WTBWP/"
     "7a29b3617781ade440676c0c7766b81c543309a4f37bfa8bf1707aecfa39f131"
@@ -22,6 +25,11 @@ PDF_PATH = (
     "/1.0.0/corporate-announcements/2J4PCEOQYA3WTBWP/859054_2025_SGX_Annual_Report.pdf"
 )
 PDF_URL = f"https://links.sgx.com{PDF_PATH}"
+DIVIDEND_DETAIL_PATH = (
+    "/1.0.0/corporate-announcements/TMJSCTEZJC4FX93X/"
+    "8a29b3617781ade440676c0c7766b81c543309a4f37bfa8bf1707aecfa39f132"
+)
+DIVIDEND_DETAIL_URL = f"https://links.sgx.com{DIVIDEND_DETAIL_PATH}"
 
 
 @pytest.mark.asyncio
@@ -101,6 +109,56 @@ async def test_list_filings_maps_sgx_annual_reports() -> None:
     assert filing.issuer_name == "SINGAPORE EXCHANGE LIMITED"
     assert filing.pdf_available is True
     assert filing.xbrl_available is False
+
+
+@pytest.mark.asyncio
+async def test_list_filings_maps_live_sgx_dividend_taxonomy() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == STOCKS_PATH:
+            return httpx.Response(200, json=_stocks_response())
+        if request.url.path == METADATA_PATH:
+            return httpx.Response(200, json=_metadata_response())
+        if request.url.path == APP_CONFIG_PATH:
+            return httpx.Response(
+                200,
+                json={"CMS_VERSION": "09434be8973b96b28894aefc57aff9e6c1f8f9c6"},
+            )
+        if request.url.path == CMS_PATH:
+            assert request.url.params["queryId"].endswith(":we_chat_qr_validator")
+            return httpx.Response(200, json={"data": {"qrValidator": "abcXYZ123"}})
+        assert request.url.path == ANNOUNCEMENTS_PATH
+        assert request.url.params["value"] == "S68"
+        assert request.headers["authorizationtoken"] == "nopKLM123"
+        return httpx.Response(200, json=_announcements_response())
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        source = SgxClient(client=http, today=lambda: date(2026, 7, 23))
+        filings = await source.list_filings("sg_sgx_1J26", category="dividend", limit=5)
+
+    assert len(filings) == 1
+    filing = filings[0]
+    assert filing.id == "sg_sgx_TMJSCTEZJC4FX93X"
+    assert filing.company_id == "sg_sgx_1J26"
+    assert filing.title == "Cash Dividend/ Distribution::Mandatory"
+    assert filing.category == "dividend"
+    assert filing.filing_type == "dividend"
+    assert filing.filing_date == date(2026, 4, 29)
+    assert filing.published_at == datetime(2026, 4, 29, 9, 27, tzinfo=UTC)
+    assert filing.description == "Cash Dividend/ Distribution"
+    assert filing.document_id == DIVIDEND_DETAIL_URL
+
+
+@pytest.mark.asyncio
+async def test_list_filings_rejects_unpublished_sgx_category() -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _: (_ for _ in ()).throw(AssertionError("should not request"))
+        )
+    ) as http:
+        source = SgxClient(client=http)
+        filings = await source.list_filings("sg_sgx_1J26", category="material_event")
+
+    assert filings == []
 
 
 @pytest.mark.asyncio
@@ -268,6 +326,40 @@ def _reports_response() -> dict[str, object]:
                 "broadcastDateTime": 1_757_899_704_000,
             },
         ],
+    }
+
+
+def _announcements_response() -> dict[str, object]:
+    return {
+        "data": [
+            {
+                "ref_id": "SG260429DVCA54X4",
+                "sub": "DVCA",
+                "category_name": "Cash Dividend/ Distribution",
+                "title": "Cash Dividend/ Distribution::Mandatory",
+                "issuer_name": "SINGAPORE EXCHANGE LIMITED",
+                "submission_date": "20260429",
+                "submission_date_time": 1_777_454_820_000,
+                "broadcast_date_time": 1_777_454_820_000,
+                "cat": "CA",
+                "id": "TMJSCTEZJC4FX93X",
+                "url": DIVIDEND_DETAIL_URL,
+            },
+            {
+                "ref_id": "SG260429OTHRTEST",
+                "category_name": "General Announcement",
+                "title": "Investor presentation",
+                "submission_date": "20260429",
+                "broadcast_date_time": 1_777_454_820_000,
+                "cat": "ANNC",
+                "id": "AAAAAAAAAAAAAAAA",
+                "url": (
+                    "https://links.sgx.com/1.0.0/corporate-announcements/"
+                    "AAAAAAAAAAAAAAAA/"
+                    "9a29b3617781ade440676c0c7766b81c543309a4f37bfa8bf1707aecfa39f132"
+                ),
+            },
+        ]
     }
 
 

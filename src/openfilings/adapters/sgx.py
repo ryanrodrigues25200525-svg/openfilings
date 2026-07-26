@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import codecs
 import re
 import unicodedata
 from collections.abc import Callable
@@ -22,6 +23,9 @@ from openfilings.models import Company, Filing
 STOCKS_URL = "https://api.sgx.com/securities/v1.1/stocks"
 METADATA_URL = "https://api.sgx.com/marketmetadata/v2"
 FINANCIAL_REPORTS_URL = "https://api.sgx.com/financialreports/v1.0"
+ANNOUNCEMENTS_URL = "https://api.sgx.com/announcements/v1.1/securitycode"
+APP_CONFIG_URL = "https://www.sgx.com/config/appconfig.json"
+CMS_API_URL = "https://api2.sgx.com/content-api/"
 CORPORATE_INFORMATION_URL = "https://www.sgx.com/securities/corporate-information"
 SGX_LINKS_ORIGIN = "https://links.sgx.com"
 
@@ -52,6 +56,8 @@ _REJECTED_ATTACHMENT_TERMS = {
 _MAX_STOCKS_BYTES = 2 * 1024 * 1024
 _MAX_METADATA_BYTES = 16 * 1024 * 1024
 _MAX_REPORTS_BYTES = 5 * 1024 * 1024
+_MAX_ANNOUNCEMENTS_BYTES = 5 * 1024 * 1024
+_MAX_CONFIG_BYTES = 64 * 1024
 _MAX_DETAIL_BYTES = 2 * 1024 * 1024
 _MAX_REPORT_PAGES = 20
 
@@ -82,6 +88,7 @@ class SgxClient:
         )
         self._companies: tuple[Company, ...] | None = None
         self._search_aliases: dict[str, tuple[str, ...]] = {}
+        self._announcement_token: str | None = None
 
     async def __aenter__(self) -> SgxClient:
         return self
@@ -136,14 +143,21 @@ class SgxClient:
         limit: int = 25,
         category: str | None = "accounts",
     ) -> list[Filing]:
-        if category and category.casefold() != "accounts":
+        normalized_category = category.casefold() if category else "accounts"
+        if normalized_category not in {"accounts", "dividend"}:
             return []
         ibm_code = self.normalize_ibm_code(company_id_or_code)
         company = await self._company_by_ibm_code(ibm_code)
         cutoff = date(self._today().year - self._history_years, 1, 1)
         filings: dict[str, Filing] = {}
-        for row in await self._report_rows(company.name):
-            filing = self._filing_from_row(row, company=company)
+        if normalized_category == "dividend":
+            rows = await self._announcement_rows(company.local_code or "")
+            filing_parser = self._dividend_filing_from_row
+        else:
+            rows = await self._report_rows(company.name)
+            filing_parser = self._filing_from_row
+        for row in rows:
+            filing = filing_parser(row, company=company)
             if (
                 filing is not None
                 and (filing.period_end or filing.filing_date) >= cutoff
@@ -353,6 +367,61 @@ class SgxClient:
                 return records
         raise SourceError("SGX returned too many financial-report pages.")
 
+    async def _announcement_rows(self, stock_code: str) -> list[dict[str, Any]]:
+        token = await self._announcement_authorization_token()
+        response = await self._request(
+            "GET",
+            ANNOUNCEMENTS_URL,
+            params={
+                "value": stock_code,
+                "periodstart": (
+                    f"{self._today().year - self._history_years}0101_000000"
+                ),
+                "periodend": self._today().strftime("%Y%m%d_235959"),
+                "pagestart": 0,
+                "pagesize": 1000,
+            },
+            headers={
+                "Referer": "https://www.sgx.com/securities/company-announcements",
+                "authorizationToken": token,
+            },
+        )
+        if len(response.content) > _MAX_ANNOUNCEMENTS_BYTES:
+            raise SourceError("The SGX announcement response is unexpectedly large.")
+        payload = self._json_object(response, "announcement")
+        rows = payload.get("data")
+        if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+            raise SourceError("SGX returned invalid announcement records.")
+        return rows
+
+    async def _announcement_authorization_token(self) -> str:
+        if self._announcement_token is not None:
+            return self._announcement_token
+        config_response = await self._request("GET", APP_CONFIG_URL)
+        if len(config_response.content) > _MAX_CONFIG_BYTES:
+            raise SourceError("The SGX application config is unexpectedly large.")
+        config = self._json_object(config_response, "application-config")
+        cms_version = str(config.get("CMS_VERSION") or "").strip()
+        if not re.fullmatch(r"[a-f0-9]{40}", cms_version):
+            raise SourceError("SGX returned an invalid CMS version.")
+        validator_response = await self._request(
+            "GET",
+            CMS_API_URL,
+            params={"queryId": f"{cms_version}:we_chat_qr_validator"},
+            headers={"Referer": "https://www.sgx.com/securities/company-announcements"},
+        )
+        if len(validator_response.content) > _MAX_CONFIG_BYTES:
+            raise SourceError("The SGX announcement validator is unexpectedly large.")
+        validator_payload = self._json_object(
+            validator_response, "announcement-validator"
+        )
+        data = validator_payload.get("data")
+        validator = data.get("qrValidator") if isinstance(data, dict) else None
+        if not isinstance(validator, str) or not validator.strip():
+            raise SourceError("SGX returned an invalid announcement validator.")
+        self._announcement_token = codecs.decode(validator.strip(), "rot_13")
+        return self._announcement_token
+
     @classmethod
     def _filing_from_row(
         cls, row: dict[str, Any], *, company: Company
@@ -398,6 +467,53 @@ class SgxClient:
             source_url=source_url,
         )
 
+    @classmethod
+    def _dividend_filing_from_row(
+        cls, row: dict[str, Any], *, company: Company
+    ) -> Filing | None:
+        category_name = str(row.get("category_name") or "").strip()
+        if "dividend" not in cls._normalize_search(category_name):
+            return None
+        announcement_id = str(row.get("id") or "").strip().upper()
+        if re.fullmatch(_ANNOUNCEMENT_ID_PATTERN, announcement_id) is None:
+            return None
+        try:
+            source_url = cls.detail_url(str(row.get("url") or ""))
+        except DocumentUnavailableError:
+            return None
+        if cls._announcement_id(source_url) != announcement_id:
+            return None
+        published_at = cls._epoch_milliseconds(
+            row.get("broadcast_date_time") or row.get("submission_date_time")
+        )
+        filing_date = (
+            published_at.astimezone(_SINGAPORE).date()
+            if published_at
+            else cls._compact_date(row.get("submission_date"))
+        )
+        if filing_date is None:
+            return None
+        title = str(row.get("title") or category_name).strip()
+        if not title:
+            return None
+        return Filing(
+            id=f"sg_sgx_{announcement_id}",
+            company_id=company.id,
+            source="sgx",
+            source_id=announcement_id,
+            title=title,
+            category="dividend",
+            filing_type="dividend",
+            filing_date=filing_date,
+            published_at=published_at,
+            description=category_name,
+            document_id=source_url,
+            media_type="application/pdf",
+            issuer_name=company.name,
+            language="en",
+            source_url=source_url,
+        )
+
     @staticmethod
     def _epoch_milliseconds(value: Any) -> datetime | None:
         if not isinstance(value, (int, float)) or isinstance(value, bool):
@@ -411,6 +527,13 @@ class SgxClient:
     def _epoch_milliseconds_date(cls, value: Any) -> date | None:
         timestamp = cls._epoch_milliseconds(value)
         return timestamp.astimezone(_SINGAPORE).date() if timestamp else None
+
+    @staticmethod
+    def _compact_date(value: Any) -> date | None:
+        try:
+            return datetime.strptime(str(value), "%Y%m%d").date()
+        except ValueError:
+            return None
 
     @staticmethod
     def _announcement_id(detail_url: str) -> str:
