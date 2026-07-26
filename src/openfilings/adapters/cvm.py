@@ -8,8 +8,9 @@ import io
 import re
 import unicodedata
 import zipfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import UTC, date, datetime
+from decimal import Decimal, InvalidOperation
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -18,7 +19,7 @@ import httpx
 from openfilings.adapters.base import SourceDocument
 from openfilings.exceptions import DocumentUnavailableError, SourceError
 from openfilings.limits import MAX_TAGGED_DOCUMENT_BYTES
-from openfilings.models import Company, Filing
+from openfilings.models import Company, Filing, MajorHolderNotification
 
 COMPANY_REGISTRY_URL = (
     "https://dados.cvm.gov.br/dados/CIA_ABERTA/CAD/DADOS/cad_cia_aberta.csv"
@@ -185,6 +186,77 @@ class CvmClient:
             reverse=True,
         )[: max(1, limit)]
 
+    async def list_major_holders(
+        self,
+        company_id_or_code: str,
+        *,
+        limit: int = 25,
+    ) -> list[MajorHolderNotification]:
+        """Return shareholder positions from the issuer's structured FRE forms."""
+
+        code = self.normalize_cvm_code(company_id_or_code)
+        companies = await self._company_registry()
+        company = next(
+            (candidate for candidate in companies if candidate.local_code == code),
+            None,
+        )
+        if company is None:
+            raise SourceError(
+                f"CVM code {code} is not an active Brazilian exchange-listed issuer."
+            )
+
+        holders: dict[tuple[str, str], MajorHolderNotification] = {}
+        current_year = self._today().year
+        for year in range(current_year, current_year - self._history_years, -1):
+            for row in await self._fre_position_rows(year):
+                if self._digits(row.get("CNPJ_Companhia", "")) != self._digits(
+                    company.source_id
+                ):
+                    continue
+                holder = self._major_holder_from_row(row, company=company, year=year)
+                if holder is None:
+                    continue
+                holder_key = self._digits(row.get("CPF_CNPJ_Acionista", ""))
+                holders[(holder.filing_id, holder_key or holder.holder_name)] = holder
+            if len(holders) >= max(1, limit):
+                break
+        return self._sort_major_holders(holders.values())[: max(1, limit)]
+
+    async def search_major_holders(
+        self,
+        holder_name: str,
+        *,
+        limit: int = 25,
+    ) -> list[MajorHolderNotification]:
+        """Search structured FRE shareholder positions across Brazilian issuers."""
+
+        clean_name = self._normalize_search(holder_name)
+        if not clean_name:
+            return []
+        companies = await self._company_registry()
+        companies_by_cnpj = {
+            self._digits(company.source_id): company for company in companies
+        }
+        matches: dict[tuple[str, str], MajorHolderNotification] = {}
+        current_year = self._today().year
+        for year in range(current_year, current_year - self._history_years, -1):
+            for row in await self._fre_position_rows(year):
+                if clean_name not in self._normalize_search(row.get("Acionista", "")):
+                    continue
+                company = companies_by_cnpj.get(
+                    self._digits(row.get("CNPJ_Companhia", ""))
+                )
+                if company is None:
+                    continue
+                holder = self._major_holder_from_row(row, company=company, year=year)
+                if holder is None:
+                    continue
+                holder_key = self._digits(row.get("CPF_CNPJ_Acionista", ""))
+                matches[(holder.filing_id, holder_key or holder.holder_name)] = holder
+            if len(matches) >= max(1, limit):
+                break
+        return self._sort_major_holders(matches.values())[: max(1, limit)]
+
     async def download_document(self, document_url: str) -> SourceDocument:
         source_url = self.document_url(document_url)
         response = await self._request("GET", source_url)
@@ -349,6 +421,76 @@ class CvmClient:
                 return self._csv_rows(zip_archive.read(member))
         except (zipfile.BadZipFile, RuntimeError) as exc:
             raise SourceError(f"The CVM VLMO archive for {year} is invalid.") from exc
+
+    async def _fre_position_rows(self, year: int) -> list[dict[str, str]]:
+        """Shareholder-position section of the yearly structured FRE archive."""
+
+        archive = await self.structured_archive("fre", year)
+        if archive is None:
+            return []
+        expected_name = f"fre_cia_aberta_posicao_acionaria_{year}.csv"
+        try:
+            with zipfile.ZipFile(io.BytesIO(archive)) as zip_archive:
+                members = [
+                    member
+                    for member in zip_archive.infolist()
+                    if not member.is_dir()
+                    and member.filename.rsplit("/", 1)[-1].casefold() == expected_name
+                ]
+                if len(members) != 1:
+                    raise SourceError(
+                        f"The CVM FRE archive for {year} does not contain one "
+                        "shareholder-position table."
+                    )
+                member = members[0]
+                if member.file_size > _MAX_ARCHIVE_EXPANDED_BYTES:
+                    raise SourceError(
+                        f"The CVM FRE shareholder table for {year} expands beyond "
+                        "the safe limit."
+                    )
+                return self._csv_rows(zip_archive.read(member))
+        except (zipfile.BadZipFile, RuntimeError) as exc:
+            raise SourceError(f"The CVM FRE archive for {year} is invalid.") from exc
+
+    def _major_holder_from_row(
+        self,
+        row: dict[str, str],
+        *,
+        company: Company,
+        year: int,
+    ) -> MajorHolderNotification | None:
+        document_id = row.get("ID_Documento", "").strip()
+        holder_name = row.get("Acionista", "").strip()
+        if not document_id.isdigit() or not holder_name:
+            return None
+        return MajorHolderNotification(
+            filing_id=f"br_cvm_fre_{document_id}",
+            company_id=company.id,
+            issuer_name=row.get("Nome_Companhia", "").strip() or company.name,
+            holder_name=holder_name,
+            position_date=self._parse_date(row.get("Data_Referencia")),
+            total_percent=self._parse_decimal(
+                row.get("Percentual_Total_Acoes_Circulacao")
+            ),
+            total_voting_rights=self._parse_integer(
+                row.get("Quantidade_Total_Acoes_Circulacao")
+            ),
+            source_url=self.structured_archive_url("fre", year),
+        )
+
+    @staticmethod
+    def _sort_major_holders(
+        holders: Iterable[MajorHolderNotification],
+    ) -> list[MajorHolderNotification]:
+        return sorted(
+            holders,
+            key=lambda holder: (
+                holder.position_date or date.min,
+                holder.filing_id,
+                holder.holder_name,
+            ),
+            reverse=True,
+        )
 
     def _company_from_row(self, row: dict[str, str]) -> Company | None:
         if (
@@ -539,6 +681,28 @@ class CvmClient:
                 if not unicodedata.combining(character)
             ).split()
         )
+
+    @staticmethod
+    def _digits(value: str) -> str:
+        return "".join(character for character in value if character.isdigit())
+
+    @staticmethod
+    def _parse_decimal(value: str | None) -> Decimal | None:
+        clean_value = (value or "").strip().replace(",", ".")
+        if not clean_value:
+            return None
+        try:
+            return Decimal(clean_value)
+        except InvalidOperation:
+            return None
+
+    @staticmethod
+    def _parse_integer(value: str | None) -> int | None:
+        clean_value = (value or "").strip().replace(".", "").replace(",", "")
+        try:
+            return int(clean_value) if clean_value else None
+        except ValueError:
+            return None
 
     @staticmethod
     def _slug(value: str) -> str:

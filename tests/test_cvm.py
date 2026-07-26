@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import zipfile
 from datetime import date
+from decimal import Decimal
 
 import httpx
 import pytest
@@ -15,6 +16,7 @@ from openfilings.storage.sqlite import SQLiteCache
 COMPANY_URL_PATH = "/dados/CIA_ABERTA/CAD/DADOS/cad_cia_aberta.csv"
 IPE_URL_PATH = "/dados/CIA_ABERTA/DOC/IPE/DADOS/ipe_cia_aberta_2026.zip"
 VLMO_URL_PATH = "/dados/CIA_ABERTA/DOC/VLMO/DADOS/vlmo_cia_aberta_2026.zip"
+FRE_URL_PATH = "/dados/CIA_ABERTA/DOC/FRE/DADOS/fre_cia_aberta_2026.zip"
 DOCUMENT_PATH = "/ENET/frmDownloadDocumento.aspx"
 DOCUMENT_URL = (
     "https://www.rad.cvm.gov.br/ENET/frmDownloadDocumento.aspx?"
@@ -95,6 +97,57 @@ async def test_list_filings_insider_category_reads_vlmo_dataset() -> None:
     assert filing.category == "insider"
     assert filing.filing_type == "insider"
     assert filing.company_id == "br_cvm_001023"
+
+
+@pytest.mark.asyncio
+async def test_major_holders_read_structured_fre_positions() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == COMPANY_URL_PATH:
+            return httpx.Response(200, content=_company_csv())
+        if request.url.path == FRE_URL_PATH:
+            return httpx.Response(200, content=_fre_archive())
+        assert "/DOC/FRE/DADOS/" in request.url.path
+        return httpx.Response(404)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        source = CvmClient(client=http, today=lambda: date(2026, 7, 22))
+        holders = await source.list_major_holders("br_cvm_001023", limit=5)
+        matches = await source.search_major_holders("BlackRock", limit=5)
+
+    assert [holder.holder_name for holder in holders] == [
+        "GOVERNO FEDERAL",
+        "BLACKROCK INC.",
+    ]
+    blackrock = holders[1]
+    assert blackrock.filing_id == "br_cvm_fre_123456"
+    assert blackrock.company_id == "br_cvm_001023"
+    assert blackrock.position_date == date(2025, 12, 31)
+    assert blackrock.total_percent == Decimal("5.01")
+    assert blackrock.total_voting_rights == 432100000
+    assert blackrock.source_url.endswith("fre_cia_aberta_2026.zip")
+    assert matches == [blackrock]
+
+
+@pytest.mark.asyncio
+async def test_service_routes_brazil_major_holders_by_company_prefix(tmp_path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == COMPANY_URL_PATH:
+            return httpx.Response(200, content=_company_csv())
+        if request.url.path == FRE_URL_PATH:
+            return httpx.Response(200, content=_fre_archive())
+        assert "/DOC/FRE/DADOS/" in request.url.path
+        return httpx.Response(404)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        cvm = CvmClient(client=http, today=lambda: date(2026, 7, 22))
+        cache = SQLiteCache(tmp_path / "cache.sqlite3")
+        service = OpenFilingsService(cache, cvm_source=cvm)
+        holders = await service.list_major_holders("br_cvm_001023", limit=1)
+        matches = await service.search_major_holders("BlackRock", limit=5)
+        cache.close()
+
+    assert [holder.holder_name for holder in holders] == ["GOVERNO FEDERAL"]
+    assert [holder.holder_name for holder in matches] == ["BLACKROCK INC."]
 
 
 @pytest.mark.asyncio
@@ -276,4 +329,34 @@ def _vlmo_archive() -> bytes:
         # The real VLMO archive also ships a much larger per-person detail
         # file; the client must ignore it and only parse the index file.
         archive.writestr("vlmo_cia_aberta_con_2026.csv", header.encode("cp1252"))
+    return stream.getvalue()
+
+
+def _fre_archive() -> bytes:
+    header = (
+        "CNPJ_Companhia;ID_Documento;Data_Referencia;Versao;Nome_Companhia;"
+        "Acionista;CPF_CNPJ_Acionista;Tipo_Pessoa;Nacionalidade;"
+        "Acionista_Controlador;Participante_Acordo_Acionistas;"
+        "Percentual_Acao_Ordinaria_Circulacao;Percentual_Acao_Preferencial_Circulacao;"
+        "Percentual_Total_Acoes_Circulacao;Quantidade_Acao_Ordinaria_Circulacao;"
+        "Quantidade_Acao_Preferencial_Circulacao;Quantidade_Total_Acoes_Circulacao\n"
+    )
+    rows = (
+        "00.000.000/0001-91;123456;2025-12-31;1;BANCO DO BRASIL S.A.;"
+        "BLACKROCK INC.;00.000.001/0001-00;Pessoa Jurídica;Estados Unidos;"
+        "Não;Não;0;8.20;5.01;0;432100000;432100000\n"
+        "00.000.000/0001-91;123456;2025-12-31;1;BANCO DO BRASIL S.A.;"
+        "GOVERNO FEDERAL;00.394.460/0001-41;Pessoa Jurídica;Brasil;"
+        "Sim;Sim;50.00;0;25.50;1000000000;0;1000000000\n"
+    )
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(
+            "fre_cia_aberta_posicao_acionaria_2026.csv",
+            (header + rows).encode("cp1252"),
+        )
+        archive.writestr(
+            "fre_cia_aberta_posicao_acionaria_classe_acao_2026.csv",
+            header.encode("cp1252"),
+        )
     return stream.getvalue()
