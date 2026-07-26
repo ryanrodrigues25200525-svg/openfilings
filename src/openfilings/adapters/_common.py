@@ -11,6 +11,57 @@ from typing import Any
 import httpx
 
 from openfilings.exceptions import SourceError
+from openfilings.limits import MAX_TAGGED_DOCUMENT_BYTES
+
+
+async def bounded_request(
+    client: httpx.AsyncClient,
+    method: str,
+    url: str,
+    *,
+    max_bytes: int = MAX_TAGGED_DOCUMENT_BYTES,
+    **kwargs: Any,
+) -> httpx.Response:
+    """Send a request without allowing HTTPX to buffer an unbounded body."""
+
+    follow_redirects = kwargs.pop("follow_redirects", None)
+    request = client.build_request(method, url, **kwargs)
+    send_options = (
+        {"follow_redirects": follow_redirects} if follow_redirects is not None else {}
+    )
+    response = await client.send(
+        request,
+        stream=True,
+        **send_options,
+    )
+    declared = response.headers.get("content-length")
+    try:
+        if declared is not None and int(declared) > max_bytes:
+            await response.aclose()
+            raise SourceError(f"Response exceeds the {max_bytes} byte limit.")
+    except ValueError:
+        pass
+    # Mock transports may provide an already-materialized response. Production
+    # requests reach this method with an unconsumed stream.
+    if response.is_stream_consumed:
+        if len(response.content) > max_bytes:
+            raise SourceError(f"Response exceeds the {max_bytes} byte limit.")
+        return response
+    data = bytearray()
+    try:
+        # ``aiter_bytes`` retains HTTPX's normal content decoding. Using raw
+        # chunks here would leave gzip-compressed bytes in ``response.content``
+        # after we materialize the bounded stream, breaking JSON and XML
+        # consumers for regulators that compress API replies.
+        async for chunk in response.aiter_bytes():
+            data.extend(chunk)
+            if len(data) > max_bytes:
+                raise SourceError(f"Response exceeds the {max_bytes} byte limit.")
+    except Exception:
+        await response.aclose()
+        raise
+    response._content = bytes(data)  # HTTPX has consumed the stream above.
+    return response
 
 
 class RetryingClient:
@@ -54,7 +105,7 @@ class RetryingClient:
         kwargs["headers"] = request_headers
         for attempt in range(self._max_retries + 1):
             try:
-                response = await self._client.request(method, url, **kwargs)
+                response = await bounded_request(self._client, method, url, **kwargs)
             except httpx.RequestError as exc:
                 if attempt >= self._max_retries:
                     detail = str(exc).strip() or type(exc).__name__

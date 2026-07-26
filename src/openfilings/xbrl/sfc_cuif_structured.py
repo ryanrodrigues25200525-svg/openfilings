@@ -69,6 +69,8 @@ def extract_sfc_cuif_balance_sheet(
                     value=value,
                     unit="COP",
                     decimals="0",
+                    provenance="regulated_structured_data",
+                    confidence=95,
                 ),
             ),
         )

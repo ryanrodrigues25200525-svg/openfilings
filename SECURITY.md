@@ -16,9 +16,13 @@ real regulator credentials, personal data, or unpublished filing material.
 
 OpenFilings accepts untrusted public documents. Downloads are size-limited,
 archive paths are validated, XML parsing is bounded, URLs are restricted to
-expected regulator hosts, and OCR has page and per-page timeout limits. Source
-documents are processed locally and discarded; only normalized metadata,
-compressed Markdown, and structured financials are cached.
+expected regulator hosts, and OCR has page and per-page timeout limits. Most
+source documents are processed locally and discarded after extraction. An
+explicit SEDAR+ import is retained as a compressed SQLite cache entry under the
+user's local filesystem protections so it can be reused without browser
+automation; use `openfilings cache prune` to remove it. Normal
+cache entries contain normalized metadata, compressed Markdown, and structured
+financials.
 
 EDINET credentials are read from the environment and must never be committed.
 The keyless scheduled smoke suite deliberately excludes Japan.

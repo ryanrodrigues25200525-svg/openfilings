@@ -4,9 +4,20 @@ import hashlib
 import json
 import sqlite3
 import zlib
+from datetime import date
+from decimal import Decimal
 
 from openfilings.adapters.base import SourceDocument
-from openfilings.models import ExtractionQuality, FilingContent
+from openfilings.models import (
+    ExtractionQuality,
+    Filing,
+    FilingContent,
+    FilingFinancials,
+    FinancialLineItem,
+    FinancialStatement,
+    FinancialValue,
+    ReportingPeriod,
+)
 from openfilings.storage.sqlite import SQLiteCache
 
 
@@ -67,6 +78,66 @@ def test_source_document_round_trips_and_prunes(tmp_path) -> None:
     assert cache.prune_source_documents(0) == 1
     assert cache.get_source_document("ca_sedar_filing_123") is None
     cache.close()
+
+
+def test_historical_facts_preserve_restated_and_as_of_views(tmp_path) -> None:
+    cache = SQLiteCache(tmp_path / "history.sqlite3")
+    period = ReportingPeriod(id="fy2024", end_date=date(2024, 12, 31), kind="duration")
+
+    def store(filing_id: str, filing_date: date, value: str) -> None:
+        filing = Filing(
+            id=filing_id,
+            company_id="uk_lei_example",
+            source="fca_nsm",
+            source_id=filing_id,
+            title="Annual report",
+            category="accounts",
+            filing_type="annual",
+            filing_date=filing_date,
+            source_url=f"https://example.test/{filing_id}",
+        )
+        financials = FilingFinancials(
+            filing_id=filing_id,
+            company_id=filing.company_id,
+            source_url=filing.source_url,
+            statements=(
+                FinancialStatement(
+                    statement_type="income_statement",
+                    title="Income statement",
+                    line_items=(
+                        FinancialLineItem(
+                            code="revenue",
+                            name="Revenue",
+                            concept="ifrs-full:Revenue",
+                            values=(
+                                FinancialValue(period=period, value=Decimal(value)),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+            fact_count=1,
+            sha256="0" * 64,
+        )
+        cache.put_historical_facts(filing, financials)
+
+    store("original", date(2025, 2, 1), "100")
+    store("restated", date(2026, 2, 1), "110")
+
+    as_reported = cache.historical_facts("uk_lei_example", view="as_reported")
+    latest = cache.historical_facts("uk_lei_example", view="latest_restated")
+    as_of = cache.historical_facts(
+        "uk_lei_example", view="as_of", as_of=date(2025, 12, 31)
+    )
+    cache.close()
+
+    assert [fact.value for fact in as_reported] == [Decimal("110"), Decimal("100")]
+    assert [(fact.filing_id, fact.value) for fact in latest] == [
+        ("restated", Decimal("110"))
+    ]
+    assert [(fact.filing_id, fact.value) for fact in as_of] == [
+        ("original", Decimal("100"))
+    ]
 
 
 def test_existing_cache_is_migrated_with_quality_metadata(tmp_path) -> None:

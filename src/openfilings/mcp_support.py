@@ -363,6 +363,10 @@ def _line_item_view(item: Any, *, labels: Sequence[str], detail: str) -> dict[st
                     "unit": value.unit,
                     "decimals": value.decimals,
                     "dimensions": [list(dimension) for dimension in value.dimensions],
+                    "provenance": value.provenance,
+                    "confidence": value.confidence,
+                    "source_context": value.source_context,
+                    "derived_from": list(value.derived_from) or None,
                 }
             )
             for value in item.values

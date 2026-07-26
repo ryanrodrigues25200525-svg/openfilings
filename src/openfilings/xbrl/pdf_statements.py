@@ -952,6 +952,8 @@ def _row_values(
                     if definition.code in {"basic_eps", "diluted_eps"}
                     else table_format.decimals
                 ),
+                provenance="pdf_table",
+                confidence=75,
             )
         )
     return tuple(values)
@@ -981,6 +983,8 @@ def _values_from_numbers(
             decimals=(
                 "0" if definition.code in {"basic_eps", "diluted_eps"} else decimals
             ),
+            provenance="pdf_table",
+            confidence=75,
         )
         for number, year in zip(numbers, years, strict=True)
     )
@@ -1382,6 +1386,12 @@ def _with_derived_current_noncurrent_totals(
                 + noncurrent_by_period[current_value.period.id].value,
                 unit=current_value.unit,
                 decimals=current_value.decimals,
+                provenance="derived",
+                confidence=min(
+                    current_value.confidence,
+                    noncurrent_by_period[current_value.period.id].confidence,
+                ),
+                derived_from=(current_code, noncurrent_code),
             )
             for current_value in current.values
             if current_value.period.id in noncurrent_by_period
@@ -1439,6 +1449,12 @@ def _with_derived_balance_sheet_total(
             ),
             unit=base_value.unit,
             decimals=base_value.decimals,
+            provenance="derived",
+            confidence=min(
+                base_value.confidence,
+                subtrahend_by_period[base_value.period.id].confidence,
+            ),
+            derived_from=(base.code, subtrahend.code),
         )
         for base_value in base.values
         if base_value.period.id in subtrahend_by_period

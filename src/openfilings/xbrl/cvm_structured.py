@@ -209,6 +209,9 @@ def _with_derived_total_liabilities(
             value=current_value.value + matching.value,
             unit=current_value.unit,
             decimals=current_value.decimals,
+            provenance="derived",
+            confidence=min(current_value.confidence, matching.confidence),
+            derived_from=("current_liabilities", "noncurrent_liabilities"),
         )
         for current_value in current.values
         if (matching := noncurrent_by_period.get(current_value.period.label))
@@ -264,7 +267,14 @@ def _statement_line_items(
         definition = _DEFINITIONS[code]
         currency = _currency(rows)
         values = tuple(
-            FinancialValue(period=period, value=value, unit=currency, decimals="0")
+            FinancialValue(
+                period=period,
+                value=value,
+                unit=currency,
+                decimals="0",
+                provenance="regulated_structured_data",
+                confidence=95,
+            )
             for value, period, _depth in (
                 by_order.get(order)
                 for order in ("ultimo", "penultimo")

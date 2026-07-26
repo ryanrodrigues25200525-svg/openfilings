@@ -1,15 +1,21 @@
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 import pytest
 
-from openfilings.smoke import SMOKE_CASES, run_live_smoke
+from openfilings.smoke import (
+    SMOKE_CASES,
+    SmokeCase,
+    _balance_sheet_identity,
+    run_live_smoke,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_keyless_smoke_matrix_covers_every_enabled_source() -> None:
+def test_keyless_smoke_matrix_covers_every_keyless_source() -> None:
     assert {case.source for case in SMOKE_CASES} == {
         "fca_nsm",
         "esef",
@@ -22,6 +28,7 @@ def test_keyless_smoke_matrix_covers_every_enabled_source() -> None:
         "sedar",
         "edinet",
         "kap",
+        "asx",
     }
     assert all(case.query and case.label for case in SMOKE_CASES)
     # SEDAR+ and EDINET have no keyless filing-search API (SEDAR+ blocks
@@ -37,13 +44,58 @@ def test_keyless_smoke_matrix_covers_every_enabled_source() -> None:
 async def test_live_smoke_runner_checks_company_and_filing_resolution() -> None:
     service = _FakeService()
 
-    results = await run_live_smoke(service, cases=SMOKE_CASES[:2], timeout_seconds=1)
+    cases = tuple(
+        SmokeCase(
+            case.label,
+            case.query,
+            case.source,
+            require_source_balance_sheet=False,
+        )
+        for case in SMOKE_CASES[:2]
+    )
+    results = await run_live_smoke(service, cases=cases, timeout_seconds=1)
 
     assert len(results) == 2
     assert results[0].company_id == "company-fca_nsm"
     assert results[0].filing_id == "filing-fca_nsm"
     assert results[0].identity_check == "not_applicable (no balance sheet extracted)"
     assert service.sources == ["fca_nsm", "esef"]
+
+
+@pytest.mark.asyncio
+async def test_live_smoke_runner_validates_concurrency() -> None:
+    with pytest.raises(ValueError, match="concurrency"):
+        await run_live_smoke(_FakeService(), cases=(), concurrency=0)
+
+
+def test_balance_sheet_identity_requires_common_source_values() -> None:
+    class _Value:
+        def __init__(self, end_date: date, value: int, provenance: str = "tagged_xbrl"):
+            self.period = type("Period", (), {"end_date": end_date})()
+            self.value = value
+            self.provenance = provenance
+            self.dimensions = ()
+
+    class _Item:
+        def __init__(self, code: str, values: list[_Value]):
+            self.code = code
+            self.values = values
+
+    class _Balance:
+        line_items = (
+            _Item("total_assets", [_Value(date(2025, 12, 31), 100)]),
+            _Item("total_liabilities", [_Value(date(2024, 12, 31), 60)]),
+            _Item("total_equity", [_Value(date(2025, 12, 31), 40)]),
+        )
+
+    class _Financials:
+        @staticmethod
+        def balance_sheet() -> _Balance:
+            return _Balance()
+
+    assert _balance_sheet_identity(_Financials()) == (
+        "not_applicable (no common source-extracted balance-sheet period)"
+    )
 
 
 def test_ci_workflows_enforce_tests_security_and_keyless_live_checks() -> None:
@@ -56,7 +108,7 @@ def test_ci_workflows_enforce_tests_security_and_keyless_live_checks() -> None:
     assert "uv run ruff format --check ." in ci
     assert "uv run pytest" in ci
     assert "uv build" in ci
-    assert "codeql-action/analyze@v4" in security
+    assert "codeql-action/analyze@f52b05f4acaaa234e44466e66d29050e135ea9ef" in security
     assert "pip-audit" in security
     assert "openfilings.smoke" in live
     assert "EDINET_API_KEY" not in live

@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 
+from openfilings.adapters._common import bounded_request
 from openfilings.adapters.base import SourceDocument
 from openfilings.exceptions import DocumentUnavailableError, SourceError
 from openfilings.limits import MAX_TAGGED_DOCUMENT_BYTES
@@ -605,7 +606,7 @@ class CvmClient:
         allow_not_found = bool(kwargs.pop("allow_not_found", False))
         for attempt in range(self._max_retries + 1):
             try:
-                response = await self._client.request(method, url, **kwargs)
+                response = await bounded_request(self._client, method, url, **kwargs)
             except httpx.RequestError as exc:
                 if attempt >= self._max_retries:
                     raise SourceError(f"CVM request failed: {exc}") from exc

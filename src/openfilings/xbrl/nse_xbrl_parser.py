@@ -13,6 +13,7 @@ market, since the taxonomy's concept names (``Assets``, ``CurrentAssets``,
 
 from __future__ import annotations
 
+import io
 import xml.etree.ElementTree as ET
 from datetime import date
 from decimal import Decimal, InvalidOperation
@@ -24,6 +25,9 @@ from openfilings.xbrl.parser import ParsedXbrl, XbrlContext, XbrlFact
 _XBRLI_NS = "http://www.xbrl.org/2003/instance"
 _XBRLDI_NS = "http://xbrl.org/2006/xbrldi"
 _XSI_NIL = "{http://www.w3.org/2001/XMLSchema-instance}nil"
+_MAX_FACTS = 100_000
+_MAX_CONTEXTS = 20_000
+_MAX_UNITS = 20_000
 
 
 def parse_nse_xbrl_instance(data: bytes) -> ParsedXbrl:
@@ -31,37 +35,57 @@ def parse_nse_xbrl_instance(data: bytes) -> ParsedXbrl:
         raise FinancialsUnavailableError(
             "The NSE Integrated Filing XBRL document exceeds the size limit."
         )
-    try:
-        root = ET.fromstring(data)
-    except ET.ParseError as exc:
+    if b"<!DOCTYPE" in data.upper() or b"<!ENTITY" in data.upper():
         raise FinancialsUnavailableError(
-            f"The NSE Integrated Filing XBRL document could not be parsed: {exc}"
-        ) from exc
+            "The NSE Integrated Filing XBRL document contains unsupported "
+            "XML declarations."
+        )
 
     contexts: dict[str, XbrlContext] = {}
     units: dict[str, str] = {}
     facts: list[XbrlFact] = []
     namespaces: set[str] = set()
-
-    for element in root:
-        namespace, _, local = element.tag.removeprefix("{").partition("}")
-        if namespace == _XBRLI_NS:
-            if local == "context":
-                context = _parse_context(element)
-                if context is not None:
-                    contexts[context.id] = context
-            elif local == "unit":
-                unit_id = element.get("id")
-                measure = element.find(f"{{{_XBRLI_NS}}}measure")
-                if unit_id and measure is not None and measure.text:
-                    units[unit_id] = measure.text.rsplit(":", 1)[-1]
-            continue
-        if not namespace or not local:
-            continue
-        namespaces.add(namespace)
-        fact = _parse_fact(element, local)
-        if fact is not None:
-            facts.append(fact)
+    try:
+        events = ET.iterparse(io.BytesIO(data), events=("end",))
+        for _, element in events:
+            namespace, _, local = element.tag.removeprefix("{").partition("}")
+            if namespace == _XBRLI_NS:
+                if local == "context":
+                    context = _parse_context(element)
+                    if context is not None:
+                        if len(contexts) >= _MAX_CONTEXTS:
+                            raise FinancialsUnavailableError(
+                                "The NSE Integrated Filing XBRL document has "
+                                "too many contexts."
+                            )
+                        contexts[context.id] = context
+                    element.clear()
+                elif local == "unit":
+                    unit_id = element.get("id")
+                    measure = element.find(f"{{{_XBRLI_NS}}}measure")
+                    if unit_id and measure is not None and measure.text:
+                        if len(units) >= _MAX_UNITS:
+                            raise FinancialsUnavailableError(
+                                "The NSE Integrated Filing XBRL document has "
+                                "too many units."
+                            )
+                        units[unit_id] = measure.text.rsplit(":", 1)[-1]
+                    element.clear()
+                continue
+            if namespace and local:
+                namespaces.add(namespace)
+                fact = _parse_fact(element, local)
+                if fact is not None:
+                    if len(facts) >= _MAX_FACTS:
+                        raise FinancialsUnavailableError(
+                            "The NSE Integrated Filing XBRL document has too "
+                            "many facts."
+                        )
+                    facts.append(fact)
+    except ET.ParseError as exc:
+        raise FinancialsUnavailableError(
+            f"The NSE Integrated Filing XBRL document could not be parsed: {exc}"
+        ) from exc
 
     return ParsedXbrl(
         contexts=contexts,

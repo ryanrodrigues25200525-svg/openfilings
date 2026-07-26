@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
+from openfilings.adapters._common import bounded_request
 from openfilings.adapters.base import SourceDocument
 from openfilings.exceptions import (
     ConfigurationError,
@@ -250,7 +251,7 @@ class EdinetClient:
             if paced:
                 await self._pace()
             try:
-                response = await self._client.request(method, url, **kwargs)
+                response = await bounded_request(self._client, method, url, **kwargs)
             except httpx.RequestError as exc:
                 if attempt >= self._max_retries:
                     raise SourceError(f"EDINET request failed: {exc}") from exc

@@ -287,6 +287,10 @@ def _sum_line_items(
                     "decimals": _less_precise(
                         left_value.decimals, right_value.decimals
                     ),
+                    "provenance": "derived",
+                    "confidence": min(left_value.confidence, right_value.confidence),
+                    "source_context": None,
+                    "derived_from": ("current_assets", "noncurrent_assets"),
                 }
             )
         )
@@ -310,6 +314,10 @@ def _subtract_line_items(
                     "decimals": _less_precise(
                         left_value.decimals, right_value.decimals
                     ),
+                    "provenance": "derived",
+                    "confidence": min(left_value.confidence, right_value.confidence),
+                    "source_context": None,
+                    "derived_from": ("total_assets", "total_equity"),
                 }
             )
         )
@@ -409,6 +417,9 @@ def _financial_value(fact: XbrlFact, parsed: ParsedXbrl) -> FinancialValue | Non
         unit=parsed.units.get(fact.unit_ref or "") or fact.unit_ref,
         decimals=fact.decimals,
         dimensions=context.dimensions,
+        provenance="tagged_xbrl",
+        confidence=100,
+        source_context=context.id,
     )
 
 

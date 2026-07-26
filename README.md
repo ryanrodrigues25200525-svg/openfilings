@@ -75,6 +75,18 @@ all. SEDAR+ discovery remains browser-based, but a generated public document
 URL or locally downloaded PDF can be imported without an account, API key,
 or browser runtime.
 
+## Research controls
+
+Every normalized financial value includes its extraction `provenance` and a
+0--100 extraction `confidence`: tagged XBRL, regulator structured data, PDF
+table extraction, or a transparent derived calculation. Confidence describes
+the extraction path, not the issuer's accounting quality; retain the filing
+URL and reconcile investment-critical figures against the source report.
+
+The scheduled live suite checks one issuer per keyless source. A separate,
+reviewed accuracy benchmark pins selected facts from public annual reports and
+can be run locally with `uv run python -m openfilings.benchmarks`.
+
 ## Setup
 
 ```bash
@@ -532,6 +544,12 @@ reads its own yearly VLMO Open Data archive (CVM Instrução 358 art. 11) -
 the same row shape as the IPE archive, just a different yearly ZIP - which
 combines insider trading and holdings into one filing, so both are covered
 by `category="insider"` alone.
+
+For the UK only, `category="current_report"` returns material operational
+updates, acquisitions, disposals, trading statements, and board changes;
+`category="proxy"` returns AGM/EGM notices and resolutions. These categories
+are intentionally not exposed for other markets until their official source
+taxonomy has been live-verified.
 
 `search_disclosures()` runs a full-text keyword search across every
 issuer's disclosures for one source, not scoped to a single company. NSM's

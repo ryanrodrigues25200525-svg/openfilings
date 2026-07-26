@@ -13,6 +13,7 @@ from urllib.parse import quote, urljoin, urlparse
 
 import httpx
 
+from openfilings.adapters._common import bounded_request
 from openfilings.adapters.base import SourceDocument
 from openfilings.exceptions import DocumentUnavailableError, SourceError
 from openfilings.limits import MAX_TAGGED_DOCUMENT_BYTES
@@ -400,7 +401,7 @@ class EsefClient:
     async def _request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
         for attempt in range(self._max_retries + 1):
             try:
-                response = await self._client.request(method, url, **kwargs)
+                response = await bounded_request(self._client, method, url, **kwargs)
             except httpx.RequestError as exc:
                 if attempt >= self._max_retries:
                     raise SourceError(f"ESEF request failed: {exc}") from exc

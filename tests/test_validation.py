@@ -104,18 +104,9 @@ def test_validate_financials_flags_a_balance_sheet_that_does_not_tie_out() -> No
     assert finding["actual"] == 37636229.0
 
 
-def test_validate_financials_ignores_income_statement_without_full_granularity() -> (
-    None
-):
-    """OpenFilings only extracts headline income-statement figures
-    (revenue, operating income, pretax income, net income), never the
-    granular operating_expenses/other_income/interest_expense breakdown
-    finvariant's chained footing checks need. Mapping those headline
-    fields into finvariant's operating_income/pretax_income/net_income
-    checks would misfire on every single filing (missing minus-terms are
-    treated as zero, not skipped) - so they must not be mapped at all,
-    confirmed here by using values that would fail those checks if they
-    were mapped."""
+def test_validate_financials_ignores_income_statement_presentations() -> None:
+    """Tagged cost-of-sales and gross-profit facts are not universally
+    comparable subtotals, so they must not generate a false warning."""
     end_date = date(2025, 12, 31)
     income_statement = FinancialStatement(
         statement_type="income_statement",
@@ -142,9 +133,34 @@ def test_validate_financials_ignores_income_statement_without_full_granularity()
     report = validate_financials(financials)
     view = validation_view(report)
 
-    assert view is not None
-    assert view["ok"] is True
-    assert view["findings"] == []
+    assert view is None
+
+
+def test_validate_financials_ignores_cash_movement_without_fx_reconciliation() -> None:
+    end_date = date(2025, 12, 31)
+    cash_flow = FinancialStatement(
+        statement_type="cash_flow_statement",
+        title="Cash flow statement",
+        line_items=(
+            _line_item(
+                "operating_cash_flow", "Operating cash flow", {end_date: Decimal("100")}
+            ),
+            _line_item(
+                "investing_cash_flow", "Investing cash flow", {end_date: Decimal("-60")}
+            ),
+            _line_item(
+                "financing_cash_flow", "Financing cash flow", {end_date: Decimal("-20")}
+            ),
+            # The remaining ten is a legitimate FX/restricted-cash movement.
+            _line_item(
+                "net_change_in_cash", "Net change in cash", {end_date: Decimal("30")}
+            ),
+        ),
+    )
+
+    view = validation_view(validate_financials(_financials(cash_flow)))
+
+    assert view is None
 
 
 def test_validate_financials_returns_none_when_nothing_is_mappable() -> None:

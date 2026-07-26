@@ -87,6 +87,8 @@ def extract_dart_structured_financials(
                     value=value,
                     unit=str(row.get("currency", "")).strip() or "KRW",
                     decimals="0",
+                    provenance="regulated_structured_data",
+                    confidence=95,
                 ),
             ),
         )

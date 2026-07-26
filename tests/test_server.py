@@ -11,6 +11,7 @@ from openfilings.domain import FilingDocument
 from openfilings.exceptions import FinancialsUnavailableError
 from openfilings.models import (
     Company,
+    CompanyFacts,
     Filing,
     FilingContent,
     FilingFinancials,
@@ -90,6 +91,13 @@ class _FakeService:
 
     async def get_filing_financials(self, *_: object, **__: object) -> FilingFinancials:
         return self.financials
+
+    async def get_company_facts(self, *_: object, **__: object) -> CompanyFacts:
+        return CompanyFacts(
+            company_id=self.company.id,
+            statements=self.financials.statements,
+            filing_ids=(self.filing.id,),
+        )
 
     async def import_sedar_filing(self, *_: object, **__: object) -> FilingResource:
         return FilingResource(self.filing, self)  # type: ignore[arg-type]
@@ -205,7 +213,90 @@ async def test_mcp_registers_progressive_disclosure_tools() -> None:
         "filing_search",
         "filing_markdown",
         "filing_financials",
+        "data_quality_report",
+        "financials_query",
+        "historical_backfill",
+        "historical_facts_query",
+        "company_research_brief",
+        "companies_compare",
+        "filings_diff",
+        "watchlist_check",
     }
+
+
+@pytest.mark.asyncio
+async def test_research_mcp_tools_return_bounded_structured_responses(
+    fake_service: _FakeService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    quality = await server.data_quality_report(fake_service.filing.id)
+    queried = await server.financials_query(
+        fake_service.company.id,
+        codes=["revenue"],
+    )
+    brief = await server.company_research_brief(fake_service.company.id)
+    watchlist = await server.watchlist_check(
+        [fake_service.company.id], since=date(2026, 1, 1)
+    )
+
+    async def comparable_facts(company_id: str, **_: object) -> CompanyFacts:
+        return CompanyFacts(
+            company_id=company_id,
+            statements=fake_service.financials.statements,
+            filing_ids=(fake_service.filing.id,),
+        )
+
+    monkeypatch.setattr(fake_service, "get_company_facts", comparable_facts)
+    comparison = await server.companies_compare(
+        ["uk_fca_GB00AAA00001", "nl_esef_12345"], code="revenue"
+    )
+
+    original = fake_service.financials
+    changed_value = (
+        original.statements[0]
+        .line_items[0]
+        .values[0]
+        .model_copy(update={"value": Decimal("101")})
+    )
+    changed_item = (
+        original.statements[0]
+        .line_items[0]
+        .model_copy(
+            update={
+                "values": (
+                    changed_value,
+                    *original.statements[0].line_items[0].values[1:],
+                )
+            }
+        )
+    )
+    changed_statement = original.statements[0].model_copy(
+        update={
+            "line_items": (
+                changed_item,
+                *original.statements[0].line_items[1:],
+            )
+        }
+    )
+    changed_financials = original.model_copy(
+        update={"statements": (changed_statement, *original.statements[1:])}
+    )
+
+    async def different_financials(filing_id: str, **_: object) -> FilingFinancials:
+        return original if filing_id == "first" else changed_financials
+
+    monkeypatch.setattr(fake_service, "get_filing_financials", different_financials)
+    difference = await server.filings_diff("first", "second")
+
+    assert quality["success"] is True
+    assert quality["data"]["provenance_counts"] == {"tagged_xbrl": 4}
+    assert queried["data"]["facts"][0]["code"] == "revenue"
+    assert brief["data"]["financials"]["company_id"] == fake_service.company.id
+    assert comparison["data"]["companies"][0]["values"][0]["period_end"] == "2025-12-31"
+    assert difference["data"]["changes"][0]["first"]["value"] == "100"
+    assert difference["data"]["changes"][0]["second"]["value"] == "101"
+    assert watchlist["data"]["updates"][fake_service.company.id][0]["id"] == (
+        fake_service.filing.id
+    )
 
 
 @pytest.mark.asyncio

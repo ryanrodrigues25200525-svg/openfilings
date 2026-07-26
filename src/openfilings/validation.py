@@ -26,8 +26,12 @@ from openfilings.models import FilingFinancials, FinancialStatement
 # magnitudes; OpenFilings' PDF-heuristic values often carry the source's
 # own sign (frequently negative, shown in parentheses in the filing).
 #
-# Only revenue/cogs/gross_profit are mapped, deliberately. finvariant's
-# operating_income and pretax_income checks need operating_expenses/
+# No income-statement values are mapped. finvariant's gross-profit check
+# assumes a single, directly comparable cost-of-sales subtotal. Real tagged
+# reports need not use that presentation (for example, Tesco's FY2026
+# ``CostOfSales`` and ``GrossProfit`` tags are both valid but do not foot to
+# one another). Its operating-income and pretax-income checks also need
+# operating_expenses/
 # other_income/interest_expense to compute a correct expected value; when
 # those are absent (which OpenFilings' headline-figure extraction always
 # is - it has no such granularity), finvariant treats the missing minus-
@@ -36,13 +40,9 @@ from openfilings.models import FilingFinancials, FinancialStatement
 # profit_before_tax straight against operating_income - which are
 # genuinely different figures for any real company, producing a false
 # failure on every single filing rather than flagging a real bug.
-# gross_profit is the one check where OpenFilings reliably has both
-# inputs (revenue and cost_of_revenue) whenever it has the output.
-_INCOME_STATEMENT_FIELDS: dict[str, tuple[str, bool]] = {
-    "revenue": ("revenue", False),
-    "cost_of_revenue": ("cogs", True),
-    "gross_profit": ("gross_profit", False),
-}
+# Mapping no income-statement fields is intentional: a false accounting
+# warning is worse than an omitted low-confidence check in a research tool.
+_INCOME_STATEMENT_FIELDS: dict[str, tuple[str, bool]] = {}
 _BALANCE_SHEET_FIELDS: dict[str, tuple[str, bool]] = {
     "current_assets": ("total_current_assets", False),
     "noncurrent_assets": ("total_non_current_assets", False),
@@ -52,12 +52,11 @@ _BALANCE_SHEET_FIELDS: dict[str, tuple[str, bool]] = {
     "total_liabilities": ("total_liabilities", False),
     "total_equity": ("total_equity", False),
 }
-_CASH_FLOW_FIELDS: dict[str, tuple[str, bool]] = {
-    "operating_cash_flow": ("cfo", False),
-    "investing_cash_flow": ("cfi", False),
-    "financing_cash_flow": ("cff", False),
-    "net_change_in_cash": ("net_change_in_cash", False),
-}
+# Net cash movement commonly includes FX translation, restricted-cash, and
+# other reconciliation lines that OpenFilings intentionally does not force
+# into its normalized headline model. Do not assert CFO + CFI + CFF equals
+# the reported movement without those components.
+_CASH_FLOW_FIELDS: dict[str, tuple[str, bool]] = {}
 _FIELDS_BY_STATEMENT_TYPE = {
     "income_statement": _INCOME_STATEMENT_FIELDS,
     "balance_sheet": _BALANCE_SHEET_FIELDS,

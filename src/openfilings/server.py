@@ -30,6 +30,7 @@ from openfilings.mcp_support import (
 )
 from openfilings.models import OcrMode, StatementType
 from openfilings.service import OpenFilingsService
+from openfilings.validation import validate_financials, validation_view
 
 mcp = FastMCP(
     "OpenFilings",
@@ -39,7 +40,10 @@ mcp = FastMCP(
         "reading content, filing_read for one section, and filing_search for short "
         "relevant excerpts. filing_markdown is paginated and should be a last resort. "
         "Tools are read-only except sedar_filing_import, which stores one "
-        "user-selected public Canadian PDF in the local cache."
+        "user-selected public Canadian PDF in the local cache. Use "
+        "data_quality_report before relying on extracted values, "
+        "financials_query for a small set of facts, and filings_diff to "
+        "compare financial facts between reports."
     ),
 )
 
@@ -171,6 +175,358 @@ async def company_facts(
         )
     except FinancialsUnavailableError as exc:
         return failure(str(exc), error_code=type(exc).__name__.upper())
+    except (OpenFilingsError, ValueError) as exc:
+        return _request_failure(exc)
+
+
+@mcp.tool()
+async def data_quality_report(filing_id: str) -> dict[str, Any]:
+    """Report extraction provenance, confidence, and validation for one filing."""
+
+    try:
+        async with OpenFilingsService.from_settings() as service:
+            financials = await service.get_filing_financials(filing_id)
+        values = [
+            value
+            for statement in financials.statements
+            for item in statement.line_items
+            for value in item.values
+        ]
+        by_provenance: dict[str, int] = {}
+        for value in values:
+            by_provenance[value.provenance] = by_provenance.get(value.provenance, 0) + 1
+        return success(
+            {
+                "filing_id": financials.filing_id,
+                "source_url": financials.source_url,
+                "extraction_method": financials.extraction_method,
+                "fact_count": financials.fact_count,
+                "provenance_counts": by_provenance,
+                "confidence": {
+                    "minimum": (
+                        min(value.confidence for value in values) if values else None
+                    ),
+                    "maximum": (
+                        max(value.confidence for value in values) if values else None
+                    ),
+                },
+                "validation": validation_view(validate_financials(financials)),
+            },
+            next_steps=(
+                "Use filing_financials with detail='full' to inspect individual facts.",
+            ),
+        )
+    except FinancialsUnavailableError as exc:
+        return failure(str(exc), error_code=type(exc).__name__.upper())
+    except (OpenFilingsError, ValueError) as exc:
+        return _request_failure(exc)
+
+
+@mcp.tool()
+async def financials_query(
+    company_id: str,
+    codes: list[str],
+    periods: int = 4,
+    source: str = "all",
+) -> dict[str, Any]:
+    """Return only selected multi-period financial facts with provenance."""
+
+    try:
+        validate_limit(periods, maximum=MAX_FINANCIAL_PERIODS, name="periods")
+        if not codes or len(codes) > MAX_FINANCIAL_LINE_ITEMS:
+            raise ValueError(
+                f"codes must contain between 1 and {MAX_FINANCIAL_LINE_ITEMS} items."
+            )
+        wanted = {code.strip() for code in codes if code.strip()}
+        if not wanted:
+            raise ValueError("codes must contain at least one non-empty item.")
+        async with OpenFilingsService.from_settings() as service:
+            facts = await service.get_company_facts(
+                company_id, periods=periods, source=source
+            )
+        matches = []
+        for statement in facts.statements:
+            for item in statement.line_items:
+                if item.code not in wanted:
+                    continue
+                values = sorted(
+                    item.values, key=lambda value: value.period.end_date, reverse=True
+                )[:periods]
+                matches.append(
+                    {
+                        "statement_type": statement.statement_type,
+                        "code": item.code,
+                        "name": item.name,
+                        "concept": item.concept,
+                        "values": [
+                            {
+                                "period": value.period.label,
+                                "value": str(value.value),
+                                "unit": value.unit,
+                                "provenance": value.provenance,
+                                "confidence": value.confidence,
+                            }
+                            for value in values
+                        ],
+                    }
+                )
+        return success(
+            {"company_id": company_id, "facts": matches, "count": len(matches)}
+        )
+    except FinancialsUnavailableError as exc:
+        return failure(str(exc), error_code=type(exc).__name__.upper())
+    except (OpenFilingsError, ValueError) as exc:
+        return _request_failure(exc)
+
+
+@mcp.tool()
+async def historical_backfill(
+    company_id: str,
+    source: Literal["fca_nsm", "esef"],
+    limit: int = 100,
+) -> dict[str, Any]:
+    """Download available UK/ESEF structured filing history into local storage."""
+
+    try:
+        validate_limit(limit, maximum=500)
+        async with OpenFilingsService.from_settings() as service:
+            result = await service.backfill_company_history(
+                company_id, source=source, limit=limit
+            )
+        return success(
+            result.model_dump(mode="json"),
+            next_steps=(
+                "Use historical_facts_query with view='as_reported', "
+                "'latest_restated', or 'as_of'.",
+            ),
+        )
+    except (OpenFilingsError, ValueError) as exc:
+        return _request_failure(exc)
+
+
+@mcp.tool()
+async def historical_facts_query(
+    company_id: str,
+    codes: list[str] | None = None,
+    view: Literal["as_reported", "latest_restated", "as_of"] = "latest_restated",
+    as_of: date | None = None,
+    limit: int = 1_000,
+) -> dict[str, Any]:
+    """Query locally stored filing facts with restatement-aware semantics."""
+
+    try:
+        validate_limit(limit, maximum=10_000)
+        if view == "as_of" and as_of is None:
+            raise ValueError("as_of is required when view is as_of.")
+        async with OpenFilingsService.from_settings() as service:
+            facts = service.historical_facts(
+                company_id,
+                codes=codes,
+                view=view,
+                as_of=as_of,
+                limit=limit,
+            )
+        return success(
+            {
+                "company_id": company_id,
+                "view": view,
+                "as_of": as_of.isoformat() if as_of else None,
+                "facts": [fact.model_dump(mode="json") for fact in facts],
+                "count": len(facts),
+            },
+            next_steps=(
+                "Run historical_backfill first when this local history is empty.",
+            ),
+        )
+    except (OpenFilingsError, ValueError) as exc:
+        return _request_failure(exc)
+
+
+@mcp.tool()
+async def company_research_brief(
+    company_id: str, source: str = "all"
+) -> dict[str, Any]:
+    """Return recent filings and a compact three-period financial profile.
+
+    Ownership and director-dealing data stay in their dedicated tools because
+    coverage differs by source; missing data must not imply no activity.
+    """
+    try:
+        async with OpenFilingsService.from_settings() as service:
+            filings = await service.list_filings(company_id, source=source, limit=5)
+            facts = await service.get_company_facts(
+                company_id, source=source, periods=3
+            )
+        return success(
+            {
+                "company_id": company_id,
+                "latest_filings": [filing_summary(filing) for filing in filings],
+                "financials": company_facts_view(
+                    facts,
+                    statements=None,
+                    periods=3,
+                    detail="standard",
+                    max_line_items=12,
+                ),
+                "caveats": [
+                    "Verify investment-critical values against source filings.",
+                    "Use major_holders_list and insider_dealings_list where their "
+                    "source-market coverage applies.",
+                ],
+            }
+        )
+    except (OpenFilingsError, ValueError) as exc:
+        return _request_failure(exc)
+
+
+@mcp.tool()
+async def companies_compare(
+    company_ids: list[str], code: str, source: str = "all"
+) -> dict[str, Any]:
+    """Compare one normalized fact across two to twenty UK/ESEF issuers."""
+    try:
+        if not 2 <= len(company_ids) <= 20:
+            raise ValueError("company_ids must contain between 2 and 20 items.")
+        allowed = (
+            "uk_",
+            "nl_",
+            "fr_",
+            "es_",
+            "it_",
+            "dk_",
+            "se_",
+            "fi_",
+            "no_",
+            "pl_",
+            "be_",
+            "at_",
+            "lu_",
+            "pt_",
+        )
+        rows: list[dict[str, Any]] = []
+        async with OpenFilingsService.from_settings() as service:
+            for company_id in company_ids:
+                if not company_id.startswith(allowed):
+                    raise ValueError("companies_compare supports UK and ESEF ids only.")
+                facts = await service.get_company_facts(
+                    company_id, source=source, periods=4
+                )
+                values = [
+                    value
+                    for statement in facts.statements
+                    for item in statement.line_items
+                    if item.code == code
+                    for value in item.values
+                ]
+                rows.append(
+                    {
+                        "company_id": company_id,
+                        "values": [
+                            {
+                                "period": value.period.label,
+                                "period_end": value.period.end_date.isoformat(),
+                                "value": str(value.value),
+                                "unit": value.unit,
+                                "confidence": value.confidence,
+                                "provenance": value.provenance,
+                            }
+                            for value in sorted(
+                                values,
+                                key=lambda item: item.period.end_date,
+                                reverse=True,
+                            )[:4]
+                        ],
+                    }
+                )
+        return success(
+            {
+                "metric": code,
+                "companies": rows,
+                "caveat": (
+                    "Values remain in each issuer's reported currency; no FX "
+                    "normalization is applied."
+                ),
+            }
+        )
+    except (OpenFilingsError, ValueError) as exc:
+        return _request_failure(exc)
+
+
+@mcp.tool()
+async def filings_diff(first_filing_id: str, second_filing_id: str) -> dict[str, Any]:
+    """Compare normalized facts in two filings and return changed values."""
+    try:
+        async with OpenFilingsService.from_settings() as service:
+            first = await service.get_filing_financials(first_filing_id)
+            second = await service.get_filing_financials(second_filing_id)
+
+        def flatten(financials: Any) -> dict[tuple[str, str, str], dict[str, str]]:
+            return {
+                (statement.statement_type, item.code, value.period.label): {
+                    "value": str(value.value),
+                    "unit": value.unit,
+                    "provenance": value.provenance,
+                    "confidence": str(value.confidence),
+                }
+                for statement in financials.statements
+                for item in statement.line_items
+                for value in item.values
+            }
+
+        left, right = flatten(first), flatten(second)
+        changes = [
+            {
+                "statement_type": key[0],
+                "code": key[1],
+                "period": key[2],
+                "first": left.get(key),
+                "second": right.get(key),
+            }
+            for key in sorted(set(left) | set(right))
+            if left.get(key) != right.get(key)
+        ]
+        return success(
+            {
+                "first_filing_id": first_filing_id,
+                "second_filing_id": second_filing_id,
+                "changes": changes[:100],
+                "truncated": len(changes) > 100,
+            }
+        )
+    except (OpenFilingsError, ValueError) as exc:
+        return _request_failure(exc)
+
+
+@mcp.tool()
+async def watchlist_check(
+    company_ids: list[str], since: date, source: str = "all"
+) -> dict[str, Any]:
+    """Statelessly return filings published on or after ``since``."""
+    try:
+        if not 1 <= len(company_ids) <= 50:
+            raise ValueError("company_ids must contain between 1 and 50 items.")
+        updates: dict[str, list[dict[str, Any]]] = {}
+        async with OpenFilingsService.from_settings() as service:
+            for company_id in company_ids:
+                filings = await service.list_filings(
+                    company_id, source=source, category=None, limit=50
+                )
+                updates[company_id] = [
+                    filing_summary(filing)
+                    for filing in filings
+                    if filing.filing_date >= since
+                ]
+        return success(
+            {
+                "since": since.isoformat(),
+                "updates": updates,
+                "caveat": (
+                    "This is stateless and reports published disclosures. Insider "
+                    "and ownership events appear only where a source publishes "
+                    "them as filings."
+                ),
+            }
+        )
     except (OpenFilingsError, ValueError) as exc:
         return _request_failure(exc)
 

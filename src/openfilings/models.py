@@ -65,6 +65,12 @@ MarketCode = Annotated[str, Field(pattern=r"^[A-Z]{2}$")]
 CountryCode = Annotated[str, Field(pattern=r"^[A-Z]{2}$")]
 QualityStatus = Literal["good", "degraded", "unusable"]
 OcrMode = Literal["auto", "never", "always"]
+FactProvenance = Literal[
+    "tagged_xbrl",
+    "regulated_structured_data",
+    "pdf_table",
+    "derived",
+]
 StatementType = Literal[
     "income_statement",
     "balance_sheet",
@@ -166,13 +172,22 @@ class ReportingPeriod(DomainModel):
 
 
 class FinancialValue(DomainModel):
-    """One normalized numeric fact with its original XBRL provenance."""
+    """One normalized numeric fact with extraction provenance and confidence.
+
+    ``confidence`` expresses confidence in the extraction, not a judgement on
+    an issuer's accounting. Consumers should retain ``provenance`` and the
+    report-level source URL when using a value in an investment decision.
+    """
 
     period: ReportingPeriod
     value: Decimal
     unit: str | None = None
     decimals: str | None = None
     dimensions: tuple[tuple[str, str], ...] = ()
+    provenance: FactProvenance = "tagged_xbrl"
+    confidence: int = Field(default=100, ge=0, le=100)
+    source_context: str | None = None
+    derived_from: tuple[str, ...] = ()
 
 
 class FinancialLineItem(DomainModel):
@@ -323,6 +338,45 @@ class CompanyFacts(DomainModel):
 
     def to_markdown(self) -> str:
         return "\n".join(statement.to_markdown() for statement in self.statements)
+
+
+HistoricalView = Literal["as_reported", "latest_restated", "as_of"]
+
+
+class HistoricalFact(DomainModel):
+    """An immutable, filing-scoped normalized fact for historical research.
+
+    It deliberately retains the filing and report timestamp so a query can
+    distinguish a value originally reported for a period from a later restatement.
+    Raw source taxonomies remain represented by ``concept`` and ``source_context``.
+    """
+
+    company_id: str
+    filing_id: str
+    source: SourceName
+    reported_at: datetime
+    statement_type: StatementType
+    code: str
+    name: str
+    concept: str
+    period: ReportingPeriod
+    value: Decimal
+    unit: str | None = None
+    decimals: str | None = None
+    dimensions: tuple[tuple[str, str], ...] = ()
+    provenance: FactProvenance = "tagged_xbrl"
+    confidence: int = Field(default=100, ge=0, le=100)
+    source_context: str | None = None
+    derived_from: tuple[str, ...] = ()
+
+
+class HistoricalBackfillResult(DomainModel):
+    company_id: str
+    source: SourceName
+    discovered_filings: int
+    processed_filings: int
+    stored_facts: int
+    failures: tuple[str, ...] = ()
 
 
 class MajorHolderNotification(DomainModel):

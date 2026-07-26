@@ -56,6 +56,8 @@ from openfilings.models import (
     FinancialLineItem,
     FinancialStatement,
     FinancialValue,
+    HistoricalBackfillResult,
+    HistoricalFact,
     InsiderDealing,
     MajorHolderNotification,
     OcrMode,
@@ -91,6 +93,10 @@ _NSM_CATEGORY_TYPE_CODES: dict[str, list[str]] = {
     "insider": ["DSH"],
     "major_holdings": ["HOL"],
     "pdmr_dealings": ["DSH"],
+    # FCA NSM's own disclosure taxonomy provides stable codes for the
+    # closest non-US equivalents of SEC current reports and proxy materials.
+    "current_report": ["UPD", "ACQ", "DIS", "TST", "BOA"],
+    "proxy": ["RAG", "NOA", "ROM"],
 }
 _FACTS_STATEMENT_TITLES: dict[StatementType, str] = {
     "income_statement": "Income statement",
@@ -890,14 +896,20 @@ class OpenFilingsService:
         fetched first (list_filings already sorts newest-first), so when two
         filings report the same period, the newer filing's value wins."""
 
+        # The latest disclosure is often an RNS, proxy notice, or other
+        # non-financial announcement even when a source labels it broadly as
+        # an account-related filing. Scan a modest bounded window instead of
+        # treating ``periods`` as a raw filing count, then stop once enough
+        # reports with structured financials have been found.
+        scan_limit = min(max(periods * 5, 10), 50)
         filings = await self.list_filings(
-            company_id, category=category, limit=max(periods, 1), source=source
+            company_id, category=category, limit=scan_limit, source=source
         )
         names: dict[tuple[StatementType, str], tuple[str, str]] = {}
         values: dict[tuple[StatementType, str], dict[str, FinancialValue]] = {}
         currencies: dict[StatementType, str | None] = {}
         filing_ids: list[str] = []
-        for filing in filings[:periods]:
+        for filing in filings:
             try:
                 financials = await self.get_filing_financials(filing.id)
             except (
@@ -916,6 +928,8 @@ class OpenFilingsService:
                     bucket = values.setdefault(key, {})
                     for value in item.values:
                         bucket.setdefault(value.period.label, value)
+            if len(filing_ids) >= periods:
+                break
 
         statement_types = {statement_type for statement_type, _ in names}
         statements = tuple(
@@ -950,6 +964,69 @@ class OpenFilingsService:
             company_id=company_id,
             statements=statements,
             filing_ids=tuple(filing_ids),
+        )
+
+    async def backfill_company_history(
+        self,
+        company_id: str,
+        *,
+        source: SourceSelection,
+        limit: int = 100,
+    ) -> HistoricalBackfillResult:
+        """Persist available structured UK/ESEF filing history locally.
+
+        Source archives vary in pagination and retention. This bounded job is
+        resumable: rerunning it only inserts facts not already stored.
+        """
+
+        if source not in {"fca_nsm", "esef"}:
+            raise ConfigurationError(
+                "Historical backfill currently supports fca_nsm and esef only."
+            )
+        filings = await self.list_filings(
+            company_id, source=source, category="accounts", limit=limit
+        )
+        processed = stored = 0
+        failures: list[str] = []
+        for filing in filings:
+            try:
+                financials = await self.get_filing_financials(filing.id)
+            except (
+                FinancialsUnavailableError,
+                DocumentUnavailableError,
+                ExtractionError,
+                SourceError,
+            ) as exc:
+                failures.append(f"{filing.id}: {type(exc).__name__}")
+                continue
+            processed += 1
+            stored += self._cache.put_historical_facts(filing, financials)
+        return HistoricalBackfillResult(
+            company_id=company_id,
+            source=source,
+            discovered_filings=len(filings),
+            processed_filings=processed,
+            stored_facts=stored,
+            failures=tuple(failures),
+        )
+
+    def historical_facts(
+        self,
+        company_id: str,
+        *,
+        codes: list[str] | None = None,
+        view: str = "latest_restated",
+        as_of: date | None = None,
+        limit: int = 10_000,
+    ) -> list[HistoricalFact]:
+        """Query locally persisted filing-scoped facts without network access."""
+
+        return self._cache.historical_facts(
+            company_id,
+            codes=set(codes) if codes else None,
+            view=view,
+            as_of=as_of,
+            limit=limit,
         )
 
     async def get_major_holder(self, filing_id: str) -> MajorHolderNotification:
@@ -1539,6 +1616,11 @@ class OpenFilingsService:
                 - stats.compressed_content_bytes,
             )
         )
+        # SQLite retains freed pages and WAL bytes until explicitly compacted;
+        # payload-only limits are not a meaningful disk limit for a long-lived
+        # research cache.
+        if self._cache.stats().database_bytes > self._cache_max_bytes:
+            self._cache.enforce_database_limit(self._cache_max_bytes)
 
     @staticmethod
     async def _gather_available(

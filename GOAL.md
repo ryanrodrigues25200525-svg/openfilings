@@ -42,24 +42,24 @@ Full parity with EdgarTools' bar, applied market-by-market:
 known constraints; this section is the honest gap assessment against the
 goal above, not a restatement of what's shipped.)
 
-- **Breadth**: 16 markets covered, not "all non-US markets." Missing major
-  economies: China, Hong Kong (explicitly out of scope by decision), South
-  Korea, Australia, Switzerland, most of Scandinavia beyond Denmark/Sweden/
-  Finland, most of Latin America beyond Brazil/Mexico/Peru/Colombia, and
-  virtually all of Africa and the Middle East.
-- **Depth**: uneven within the 16. Brazil, India, the UK, and most of the EU
+- **Breadth**: 25 jurisdictions covered, not "all non-US markets." Missing
+  major economies include China, Hong Kong (explicitly out of scope by
+  decision), Switzerland, much of Scandinavia beyond the ESEF-covered
+  jurisdictions, most of Latin America beyond Brazil/Mexico/Peru/Colombia,
+  and virtually all of Africa and the Middle East.
+- **Depth**: uneven within the 25. Brazil, India, the UK, and most of the EU
   are close to EdgarTools-caliber (structured, tagged, reconciling). Mexico,
   Colombia, and Peru are partial. Singapore has no structured alternative at
   all (heuristic PDF only). Canada is discovery-only - SEDAR+ has no stable
   automated filing-retrieval API.
-- **Scope**: narrower by design so far - filing discovery, document
-  conversion, and financial-statement extraction only. No ownership/insider
-  data, no institutional holdings, no fund coverage, no comparison tooling.
-- **Reliability process**: a scheduled live smoke suite now verifies the
-  balance-sheet identity (assets = liabilities + equity) for one issuer per
-  covered market, not the full filer universe. This catches drift
-  automatically where it previously required manual spot-checking, but it
-  is not yet continuous full-universe validation.
+- **Scope**: filing discovery, document conversion, financial-statement
+  extraction, selected UK/India/Brazil insider and major-holder disclosures,
+  and selected full-text/fact-series workflows are shipped. Broad institutional
+  holdings, fund coverage, and cross-company comparison tooling remain open.
+- **Reliability process**: scheduled live smoke and reviewed accuracy
+  benchmarks cover keyless sources where the regulator permits automation;
+  EDINET is search-only without a key and DART requires one. This is not yet
+  continuous full-universe validation.
 
 Closing these gaps - in roughly this order - is what "done" requires:
 1. keep the smoke suite as the safety net while hardening the uneven markets;

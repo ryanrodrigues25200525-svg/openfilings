@@ -30,6 +30,11 @@ class SmokeCase:
     query: str
     source: str
     check_financials: bool = True
+    # Only enable this for sources whose selected filing is known to expose
+    # all three totals as direct facts. Many valid filings tag a subset and
+    # OpenFilings derives the remaining total, which is useful output but not
+    # independent smoke-test evidence.
+    require_source_balance_sheet: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +74,7 @@ SMOKE_CASES = (
     # path rather than just the PDF-covered income statement.
     SmokeCase("Colombia SFC", "Banco de Bogota", "sfc"),
     SmokeCase("Turkey KAP", "Turkcell", "kap"),
+    SmokeCase("Australia ASX", "BHP", "asx"),
     # SEDAR+ has no public filing-search API by design; only company
     # discovery is keyless, so financials aren't checked here.
     SmokeCase("Canada TSX", "Shopify", "sedar", check_financials=False),
@@ -83,19 +89,30 @@ async def run_live_smoke(
     *,
     cases: tuple[SmokeCase, ...] = SMOKE_CASES,
     timeout_seconds: float = 240.0,
+    concurrency: int = 4,
 ) -> tuple[SmokeResult, ...]:
     """Check one company, its latest filing, and (where applicable) that
     filing's balance-sheet identity per keyless source family."""
 
+    if concurrency < 1:
+        raise ValueError("concurrency must be at least one")
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def check(case: SmokeCase) -> SmokeResult | Exception:
+        try:
+            async with semaphore:
+                return await asyncio.wait_for(
+                    _run_case(service, case), timeout=timeout_seconds
+                )
+        except Exception as exc:
+            return exc
+
+    completed = await asyncio.gather(*(check(case) for case in cases))
     results: list[SmokeResult] = []
     failures: list[str] = []
-    for case in cases:
-        try:
-            result = await asyncio.wait_for(
-                _run_case(service, case), timeout=timeout_seconds
-            )
-        except Exception as exc:
-            failures.append(f"{case.label}: {type(exc).__name__}: {exc}")
+    for case, result in zip(cases, completed, strict=True):
+        if isinstance(result, Exception):
+            failures.append(f"{case.label}: {type(result).__name__}: {result}")
         else:
             results.append(result)
     if failures:
@@ -123,7 +140,7 @@ async def _run_case(service: Any, case: SmokeCase) -> SmokeResult:
             last_error = exc
             continue
         identity = _balance_sheet_identity(financials)
-        if identity.startswith("GAP"):
+        if case.require_source_balance_sheet and identity != "held":
             raise RuntimeError(f"{case.label} ({company.id}/{filing.id}): {identity}")
         return SmokeResult(case.label, company.id, filing.id, identity)
     raise RuntimeError(
@@ -136,18 +153,38 @@ def _balance_sheet_identity(financials: Any) -> str:
     balance = financials.balance_sheet()
     if balance is None:
         return "not_applicable (no balance sheet extracted)"
-    by_code = {
-        item.code: item.values[0].value for item in balance.line_items if item.values
-    }
+    by_code = {item.code: item for item in balance.line_items}
     missing = [code for code in _IDENTITY_CODES if code not in by_code]
     if missing:
         return f"not_applicable (missing {', '.join(missing)})"
-    assets = by_code["total_assets"]
-    combined = by_code["total_liabilities"] + by_code["total_equity"]
+
+    # Validate one common, dimensionless period. Comparing each item's first
+    # value can silently mix fiscal years, while derived totals only prove the
+    # arithmetic used to create them rather than the extraction's accuracy.
+    values_by_code = {
+        code: {
+            value.period.end_date: value
+            for value in item.values
+            if not value.dimensions and value.provenance != "derived"
+        }
+        for code, item in by_code.items()
+        if code in _IDENTITY_CODES
+    }
+    common_periods = set.intersection(
+        *(set(values_by_code[code]) for code in _IDENTITY_CODES)
+    )
+    if not common_periods:
+        return "not_applicable (no common source-extracted balance-sheet period)"
+    period = max(common_periods)
+    assets = values_by_code["total_assets"][period].value
+    combined = (
+        values_by_code["total_liabilities"][period].value
+        + values_by_code["total_equity"][period].value
+    )
     tolerance = abs(assets) * _IDENTITY_TOLERANCE
     if abs(combined - assets) <= tolerance:
         return "held"
-    return f"GAP: liabilities+equity={combined} vs assets={assets}"
+    return f"GAP at {period}: liabilities+equity={combined} vs assets={assets}"
 
 
 async def _main() -> None:

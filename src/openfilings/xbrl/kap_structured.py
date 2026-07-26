@@ -111,7 +111,14 @@ def _extract_one_table(
             continue
         value_cells = row.find_all("td", class_=_VALUE_CELL_CLASS)
         values = tuple(
-            FinancialValue(period=period, value=amount, unit=_CURRENCY, decimals="0")
+            FinancialValue(
+                period=period,
+                value=amount,
+                unit=_CURRENCY,
+                decimals="0",
+                provenance="tagged_xbrl",
+                confidence=100,
+            )
             for period, cell in zip(periods, value_cells, strict=False)
             if (amount := _decimal(cell)) is not None
         )

@@ -6,7 +6,7 @@ import hashlib
 import json
 import sqlite3
 import zlib
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from openfilings.adapters.base import SourceDocument
@@ -18,6 +18,7 @@ from openfilings.models import (
     Filing,
     FilingContent,
     FilingFinancials,
+    HistoricalFact,
 )
 
 
@@ -326,6 +327,105 @@ class SQLiteCache:
         )
         return financials.model_copy(update={"from_cache": True})
 
+    def put_historical_facts(self, filing: Filing, financials: FilingFinancials) -> int:
+        """Persist immutable filing-scoped facts, including restated periods."""
+
+        reported_at = (
+            filing.published_at
+            or datetime.combine(filing.filing_date, datetime.min.time(), tzinfo=UTC)
+        ).isoformat()
+        facts = [
+            HistoricalFact(
+                company_id=filing.company_id,
+                filing_id=filing.id,
+                source=filing.source,
+                reported_at=datetime.fromisoformat(reported_at),
+                statement_type=statement.statement_type,
+                code=item.code,
+                name=item.name,
+                concept=item.concept,
+                period=value.period,
+                value=value.value,
+                unit=value.unit,
+                decimals=value.decimals,
+                dimensions=value.dimensions,
+                provenance=value.provenance,
+                confidence=value.confidence,
+                source_context=value.source_context,
+                derived_from=value.derived_from,
+            )
+            for statement in financials.statements
+            for item in statement.line_items
+            for value in item.values
+        ]
+        with self._connection:
+            self._connection.executemany(
+                """
+                INSERT INTO historical_facts (
+                    filing_id, company_id, source, reported_at, statement_type,
+                    code, period_end, payload
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(filing_id, statement_type, code, period_end, payload)
+                DO NOTHING
+                """,
+                [
+                    (
+                        fact.filing_id,
+                        fact.company_id,
+                        fact.source,
+                        fact.reported_at.isoformat(),
+                        fact.statement_type,
+                        fact.code,
+                        fact.period.end_date.isoformat(),
+                        fact.model_dump_json(),
+                    )
+                    for fact in facts
+                ],
+            )
+        return len(facts)
+
+    def historical_facts(
+        self,
+        company_id: str,
+        *,
+        codes: set[str] | None = None,
+        view: str = "latest_restated",
+        as_of: date | None = None,
+        limit: int = 10_000,
+    ) -> list[HistoricalFact]:
+        if view not in {"as_reported", "latest_restated", "as_of"}:
+            raise ValueError("view must be as_reported, latest_restated, or as_of")
+        if view == "as_of" and as_of is None:
+            raise ValueError("as_of is required when view is as_of")
+        rows = self._connection.execute(
+            """
+            SELECT payload FROM historical_facts
+            WHERE company_id = ?
+            ORDER BY reported_at DESC, filing_id DESC
+            LIMIT ?
+            """,
+            (company_id, limit),
+        ).fetchall()
+        facts = [HistoricalFact.model_validate_json(row[0]) for row in rows]
+        if codes is not None:
+            facts = [fact for fact in facts if fact.code in codes]
+        if view == "as_reported":
+            return facts
+        if as_of is not None:
+            facts = [fact for fact in facts if fact.reported_at.date() <= as_of]
+        selected: dict[tuple[object, ...], HistoricalFact] = {}
+        for fact in facts:
+            key = (
+                fact.statement_type,
+                fact.code,
+                fact.period.start_date,
+                fact.period.end_date,
+                fact.period.kind,
+                fact.dimensions,
+            )
+            selected.setdefault(key, fact)
+        return list(selected.values())
+
     def stats(self) -> CacheStats:
         companies = self._count("companies")
         filings = self._count("filings")
@@ -451,6 +551,33 @@ class SQLiteCache:
         self._connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         self._connection.execute("VACUUM")
 
+    def enforce_database_limit(self, max_bytes: int) -> int:
+        """Evict the oldest cached filing records until the SQLite files fit.
+
+        Payload pruning alone does not reclaim SQLite pages or bound filing
+        metadata. This is the final cache-limit guard; it deliberately keeps
+        company records, which are tiny and allow rediscovery after eviction.
+        """
+
+        if max_bytes < 0:
+            raise ValueError("max_bytes cannot be negative")
+        removed = 0
+        self.vacuum()
+        while self.stats().database_bytes > max_bytes:
+            row = self._connection.execute(
+                "SELECT id FROM filings ORDER BY cached_at ASC, id ASC LIMIT 1"
+            ).fetchone()
+            if row is None:
+                break
+            self.delete_filing(str(row[0]))
+            removed += 1
+            # Avoid an expensive VACUUM for every row; delete a bounded batch.
+            if removed % 100 == 0:
+                self.vacuum()
+        if removed:
+            self.vacuum()
+        return removed
+
     def _create_schema(self) -> None:
         with self._connection:
             self._connection.executescript(
@@ -510,6 +637,21 @@ class SQLiteCache:
 
                 CREATE INDEX IF NOT EXISTS filing_financials_sha256_idx
                     ON filing_financials(sha256);
+
+                CREATE TABLE IF NOT EXISTS historical_facts (
+                    filing_id TEXT NOT NULL,
+                    company_id TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    reported_at TEXT NOT NULL,
+                    statement_type TEXT NOT NULL,
+                    code TEXT NOT NULL,
+                    period_end TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    UNIQUE(filing_id, statement_type, code, period_end, payload)
+                );
+
+                CREATE INDEX IF NOT EXISTS historical_facts_company_code_idx
+                    ON historical_facts(company_id, code, period_end);
                 """
             )
             columns = {

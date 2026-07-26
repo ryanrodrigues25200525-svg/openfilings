@@ -86,14 +86,25 @@ async def test_nsm_insider_and_major_holdings_categories_map_to_type_codes(
         await service.list_filings(
             "uk_lei_2138002P5RNKC5W2JZ46", category="pdmr_dealings"
         )
+        await service.list_filings(
+            "uk_lei_2138002P5RNKC5W2JZ46", category="current_report"
+        )
+        await service.list_filings("uk_lei_2138002P5RNKC5W2JZ46", category="proxy")
         cache.close()
 
-    insider_criteria = payloads[-3]["criteriaObj"]["criteria"]
-    major_holdings_criteria = payloads[-2]["criteriaObj"]["criteria"]
-    pdmr_criteria = payloads[-1]["criteriaObj"]["criteria"]
+    insider_criteria = payloads[-5]["criteriaObj"]["criteria"]
+    major_holdings_criteria = payloads[-4]["criteriaObj"]["criteria"]
+    pdmr_criteria = payloads[-3]["criteriaObj"]["criteria"]
+    current_report_criteria = payloads[-2]["criteriaObj"]["criteria"]
+    proxy_criteria = payloads[-1]["criteriaObj"]["criteria"]
     assert {"name": "type_code", "value": ["dsh"]} in insider_criteria
     assert {"name": "type_code", "value": ["hol"]} in major_holdings_criteria
     assert {"name": "type_code", "value": ["dsh"]} in pdmr_criteria
+    assert {
+        "name": "type_code",
+        "value": ["upd", "acq", "dis", "tst", "boa"],
+    } in current_report_criteria
+    assert {"name": "type_code", "value": ["rag", "noa", "rom"]} in proxy_criteria
 
 
 @pytest.mark.asyncio
@@ -235,6 +246,70 @@ async def test_get_company_facts_raises_when_no_filing_has_financials(
         await service.get_company_facts("c1", periods=2)
 
     cache.close()
+
+
+@pytest.mark.asyncio
+async def test_get_company_facts_scans_past_recent_nonfinancial_disclosures(
+    tmp_path,
+) -> None:
+    cache = SQLiteCache(tmp_path / "cache.sqlite3")
+    service = OpenFilingsService(cache)
+    filings = [
+        Filing(
+            id=filing_id,
+            company_id="c1",
+            source="fca_nsm",
+            source_id=filing_id,
+            title=filing_id,
+            category="accounts",
+            filing_type="annual",
+            filing_date=date(2026, 3, index),
+            issuer_name="X",
+            source_url=f"https://example.test/{filing_id}",
+        )
+        for index, filing_id in enumerate(("notice", "annual"), start=1)
+    ]
+    period = ReportingPeriod(id="fy2025", end_date=date(2025, 12, 31), kind="instant")
+    annual = FilingFinancials(
+        filing_id="annual",
+        company_id="c1",
+        source_url="https://example.test/annual",
+        statements=(
+            FinancialStatement(
+                statement_type="balance_sheet",
+                title="Balance sheet",
+                line_items=(
+                    FinancialLineItem(
+                        code="total_assets",
+                        name="Total assets",
+                        concept="Assets",
+                        values=(FinancialValue(period=period, value=Decimal("100")),),
+                    ),
+                ),
+            ),
+        ),
+        fact_count=1,
+        sha256="0" * 64,
+    )
+    received_limits: list[int] = []
+
+    async def fake_list_filings(company_id, **kwargs):
+        received_limits.append(kwargs["limit"])
+        return filings
+
+    async def fake_get_financials(filing_id, **_kwargs):
+        if filing_id == "notice":
+            raise FinancialsUnavailableError("not a financial report")
+        return annual
+
+    service.list_filings = fake_list_filings  # type: ignore[method-assign]
+    service.get_filing_financials = fake_get_financials  # type: ignore[method-assign]
+
+    facts = await service.get_company_facts("c1", periods=1)
+    cache.close()
+
+    assert facts.filing_ids == ("annual",)
+    assert received_limits == [10]
 
 
 @pytest.mark.asyncio
