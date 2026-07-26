@@ -96,9 +96,7 @@ async def test_list_filings_maps_periodic_reports_and_skips_other_disclosures() 
 @pytest.mark.asyncio
 async def test_list_filings_treats_no_data_status_as_empty() -> None:
     def handler(_: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200, json={"status": "013", "message": "no data found"}
-        )
+        return httpx.Response(200, json={"status": "013", "message": "no data found"})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         client = DartClient("secret-key", client=http)

@@ -52,7 +52,8 @@ def test_ci_workflows_enforce_tests_security_and_keyless_live_checks() -> None:
     live = (ROOT / ".github/workflows/live-smoke.yml").read_text(encoding="utf-8")
 
     assert "uv sync --locked --all-extras --dev" in ci
-    assert "uv run ruff check src tests" in ci
+    assert "uv run ruff check ." in ci
+    assert "uv run ruff format --check ." in ci
     assert "uv run pytest" in ci
     assert "uv build" in ci
     assert "codeql-action/analyze@v4" in security

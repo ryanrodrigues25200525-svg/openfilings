@@ -115,8 +115,7 @@ def extract_nse_integrated_filing_financials(
     statements = _build_statements(parsed)
     if not statements:
         raise FinancialsUnavailableError(
-            "The NSE Integrated Filing XBRL document has no supported "
-            "statement facts."
+            "The NSE Integrated Filing XBRL document has no supported statement facts."
         )
     return FilingFinancials(
         filing_id=filing.id,

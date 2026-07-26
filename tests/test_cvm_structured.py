@@ -76,13 +76,12 @@ def test_extract_cvm_structured_financials_matches_real_petrobras_figures() -> N
     assert income_codes["revenue"] == Decimal("497549000000")
     assert income_codes["gross_profit"] == Decimal("236998000000")
     assert income_codes["net_income_loss"] == Decimal("110605000000")
-    assert income_codes["revenue"] + income_codes["cost_of_revenue"] == (
-        income_codes["gross_profit"]
-    )
+    calculated_gross_profit = income_codes["revenue"] + income_codes["cost_of_revenue"]
+    assert calculated_gross_profit == income_codes["gross_profit"]
 
 
 def test_shallower_account_wins_on_label_collision() -> None:
-    """"Estoques" (inventory) legitimately labels two different accounts in
+    """The "Estoques" inventory label legitimately identifies two accounts in
     Petrobras' real chart of accounts: the current-asset line (1.01.04) and
     an unrelated nested long-term breakdown (1.02.01.05, correctly 0). The
     shallower, primary account must win regardless of file order."""
@@ -140,9 +139,7 @@ def _bpa_csv() -> str:
     return header + "".join(_bpa_row(*row) for row in rows)
 
 
-def _bpa_row(
-    code: str, label: str, value: str, period_end: str, order: str
-) -> str:
+def _bpa_row(code: str, label: str, value: str, period_end: str, order: str) -> str:
     return (
         f"33.000.167/0001-01;2025-12-31;1;PETROBRAS;009512;"
         f"DF Consolidado - Balanco Patrimonial Ativo;REAL;MIL;{order};"
