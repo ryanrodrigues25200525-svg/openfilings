@@ -5,12 +5,12 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 
-from openfilings.adapters.asx import AsxClient
+from openfilings.adapters.asx import LISTED_COMPANIES_URL, AsxClient
 from openfilings.exceptions import DocumentUnavailableError, SourceError
 from openfilings.service import OpenFilingsService
 from openfilings.storage.sqlite import SQLiteCache
 
-LISTED_COMPANIES_PATH = "/asx/research/ASXListedCompanies.csv"
+LISTED_COMPANIES_PATH = httpx.URL(LISTED_COMPANIES_URL).path
 ANNOUNCEMENT_LIST_PATH = "/asx/1/announcement/list"
 PDF_URL = "https://announcements.asx.com.au/asxpdf/20260716/pdf/071rnjvs39bf7r.pdf"
 
@@ -164,6 +164,27 @@ async def test_service_runs_complete_asx_search_list_and_markdown_pipeline(
     assert filing.id == "au_asx_filing_03111504"
     assert "## Financial statements" in content
     assert "Source system: `asx`" in content
+
+
+@pytest.mark.asyncio
+async def test_search_companies_reads_current_directory_csv_layout() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == LISTED_COMPANIES_PATH
+        return httpx.Response(
+            200,
+            content=(
+                b'"ASX code","Company name","GICs industry group",'
+                b'"Listing date","Market Cap"\n'
+                b'"BHP","BHP GROUP LIMITED","Materials","01/01/1990",1\n'
+            ),
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        source = AsxClient(client=http)
+        companies = await source.search_companies("BHP")
+
+    assert [company.id for company in companies] == ["au_asx_BHP"]
+    assert companies[0].company_type == "Materials"
 
 
 def _listed_companies_csv() -> bytes:

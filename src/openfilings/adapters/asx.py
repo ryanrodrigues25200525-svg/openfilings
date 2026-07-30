@@ -25,7 +25,10 @@ from openfilings.exceptions import DocumentUnavailableError, SourceError
 from openfilings.limits import MAX_TAGGED_DOCUMENT_BYTES
 from openfilings.models import Company, Filing, SourceName
 
-LISTED_COMPANIES_URL = "https://www.asx.com.au/asx/research/ASXListedCompanies.csv"
+LISTED_COMPANIES_URL = (
+    "https://asx.api.markitdigital.com/asx-research/1.0/companies/directory/file"
+    "?access_subscription=free&csv=true"
+)
 ANNOUNCEMENT_LIST_URL = "https://www.asx.com.au/asx/1/announcement/list"
 COMPANY_PAGE_URL = "https://www.asx.com.au/markets/company/{code}"
 ANNOUNCEMENTS_HOST = "announcements.asx.com.au"
@@ -184,7 +187,7 @@ class AsxClient(RetryingClient):
             (
                 index
                 for index, line in enumerate(lines)
-                if line.strip().casefold().startswith("company name,")
+                if "company name" in line.casefold() and "asx code" in line.casefold()
             ),
             None,
         )
@@ -192,10 +195,14 @@ class AsxClient(RetryingClient):
             raise SourceError("ASX returned an invalid listed-companies CSV.")
         reader = csv.DictReader(lines[header_index:])
         companies: list[Company] = []
-        for row in reader:
-            name = (row.get("Company name") or "").strip()
-            code = (row.get("ASX code") or "").strip().upper()
-            industry = (row.get("GICS industry group") or "").strip()
+        for raw_row in reader:
+            # ponytail: ASX has shipped both column orders and "GICS"/"GICs" casing
+            row = {
+                (key or "").strip().casefold(): value for key, value in raw_row.items()
+            }
+            name = (row.get("company name") or "").strip()
+            code = (row.get("asx code") or "").strip().upper()
+            industry = (row.get("gics industry group") or "").strip()
             if not name or not _CODE_PATTERN.fullmatch(code):
                 continue
             companies.append(
