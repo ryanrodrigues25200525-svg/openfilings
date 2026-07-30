@@ -1,8 +1,68 @@
 # OpenFilings
 
-OpenFilings is a lightweight, local-first tool for searching listed companies
-across Europe, Asia, and the Americas, listing public filings, and converting
-source documents into Markdown for LLMs.
+**Public-company filings for 25 non-US markets — normalized, keyless, local-first.**
+
+[![CI](https://github.com/ryanrodrigues25200525-svg/openfilings/actions/workflows/ci.yml/badge.svg)](https://github.com/ryanrodrigues25200525-svg/openfilings/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
+
+EdgarTools gives you SEC/EDGAR in a few lines of Python. OpenFilings applies the
+same collection-first ergonomics to everything outside the US: resolve a listed
+company, list its filings, and get normalized IFRS financial statements — read
+from the regulator's own tagged or structured data wherever it exists, rather
+than scraped out of a PDF.
+
+It runs as a Python library, a CLI, and a local MCP server, so an LLM agent can
+work through filing outlines, sections, and selected statements instead of
+pulling whole annual reports into context.
+
+```python
+import asyncio
+
+from openfilings import OpenFilings
+
+
+async def main() -> None:
+    async with OpenFilings.from_settings() as openfilings:
+        company = await openfilings.company("Nokia", source="esef")
+        filings = await company.get_filings(source="esef", limit=5)
+        financials = await filings.latest().financials()
+        print(financials.balance_sheet().to_markdown())
+
+
+asyncio.run(main())
+```
+
+```
+## Balance sheet (EUR)
+
+| Line item                 | instant 2025-12-31 | instant 2024-12-31 |
+| ------------------------- | -----------------: | -----------------: |
+| Cash and cash equivalents |         5462000000 |         6623000000 |
+| Inventories               |         2209000000 |         2163000000 |
+| Total assets              |        37597000000 |        39149000000 |
+```
+
+## Coverage
+
+25 jurisdictions, grouped by what the regulator actually publishes — depth is
+uneven and this table says where:
+
+| Data quality | Markets |
+| --- | --- |
+| **Structured** — tagged XBRL or an official bulk dataset | United Kingdom, Netherlands, France, Spain, Italy, Denmark, Sweden, Finland, Norway, Poland, Belgium, Austria, Luxembourg, Portugal, India, Turkey, Brazil |
+| **Partial** — structured for some statements, PDF for the rest | Colombia (balance sheet from SFC's CUIF dataset), Mexico, Peru |
+| **Heuristic** — PDF table extraction only | Singapore |
+| **Key required** — no keyless surface | Japan (search is keyless, filings need a free EDINET key), South Korea (`DART_API_KEY` for everything) |
+| **Discovery only** — no keyless filing retrieval exists | Canada (SEDAR+ blocks automated queries; explicit user imports supported), Australia (ASX's feed accepts no issuer filter) |
+
+Every normalized value carries its extraction `provenance` and a 0–100
+`confidence`, so a tagged XBRL fact is never silently mixed with a derived or
+PDF-parsed one.
+
+A scheduled live suite checks one issuer per keyless source against the real
+regulator endpoints and verifies the balance-sheet identity holds. See
+[Research controls](#research-controls) for what that does and does not prove.
 
 ## Documentation
 
