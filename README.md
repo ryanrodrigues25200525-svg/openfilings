@@ -6,6 +6,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
 
+<img src="docs/cli-demo.png" alt="OpenFilings CLI resolving Nokia, listing its ESEF filings, and returning a tagged balance-sheet fact with provenance and confidence" width="100%">
+
 EdgarTools gives you SEC/EDGAR in a few lines of Python. OpenFilings applies the
 same collection-first ergonomics to everything outside the US: resolve a listed
 company, list its filings, and get normalized IFRS financial statements — read
@@ -43,26 +45,65 @@ asyncio.run(main())
 | Total assets              |        37597000000 |        39149000000 |
 ```
 
-## Coverage
+## What works today
 
-25 jurisdictions, grouped by what the regulator actually publishes — depth is
-uneven and this table says where:
+<img src="docs/coverage.png" alt="Market coverage board: 13 markets with a verified balance-sheet identity, 8 with extracted statements, 2 needing an API key, 2 discovery-only" width="100%">
 
-| Data quality | Markets |
-| --- | --- |
-| **Structured** — tagged XBRL or an official bulk dataset | United Kingdom, Netherlands, France, Spain, Italy, Denmark, Sweden, Finland, Norway, Poland, Belgium, Austria, Luxembourg, Portugal, India, Turkey, Brazil |
-| **Partial** — structured for some statements, PDF for the rest | Colombia (balance sheet from SFC's CUIF dataset), Mexico, Peru |
-| **Heuristic** — PDF table extraction only | Singapore |
-| **Key required** — no keyless surface | Japan (search is keyless, filings need a free EDINET key), South Korea (`DART_API_KEY` for everything) |
-| **Discovery only** — no keyless filing retrieval exists | Canada (SEDAR+ blocks automated queries; explicit user imports supported), Australia (ASX's feed accepts no issuer filter) |
+The tiers above are not a marketing summary — they are the outcome of the last
+run of `openfilings.smoke` against the live regulator endpoints, and CI re-runs
+it weekly.
+
+| Status | Markets | What you get |
+| --- | --- | --- |
+| ✅ **Statements verified** | Italy, Denmark, Finland, Norway, Poland, Belgium, Luxembourg, Portugal, Mexico, India, Peru, Colombia, Turkey | Search, filings, and normalized statements whose balance sheet reconciles on the issuer's own tagged totals |
+| 🟡 **Statements extracted** | United Kingdom, Netherlands, France, Spain, Sweden, Austria, Brazil, Singapore | The same pipeline, but the filing leaves one total to be derived, so `assets = liabilities + equity` cannot independently self-check. Singapore is PDF-heuristic; the rest are tagged |
+| 🔑 **Key required** | Japan (EDINET), South Korea (DART) | Company search is keyless for Japan. Filings need a free `EDINET_API_KEY`; DART needs `DART_API_KEY` for everything. **South Korea has never been run against a live key** |
+| 🔍 **Discovery only** | Canada (SEDAR+), Australia (ASX) | Company search only. Canada additionally supports explicit user-supplied document imports. Neither regulator exposes keyless filing retrieval — see below |
+
+Colombia is a hybrid worth calling out: the balance sheet comes from SFC's CUIF
+supervisory dataset and reconciles exactly, while the income statement still
+comes from the PDF, because CUIF reports income and expense accounts unclosed.
 
 Every normalized value carries its extraction `provenance` and a 0–100
 `confidence`, so a tagged XBRL fact is never silently mixed with a derived or
-PDF-parsed one.
+PDF-parsed one. See [Research controls](#research-controls) for what the live
+suite does and does not prove.
 
-A scheduled live suite checks one issuer per keyless source against the real
-regulator endpoints and verifies the balance-sheet identity holds. See
-[Research controls](#research-controls) for what that does and does not prove.
+## What is not coming
+
+Two markets are permanently capped rather than merely unbuilt, and both were
+confirmed against live endpoints rather than assumed:
+
+- **Canada** — SEDAR+ blocks non-browser filing queries. Document import from a
+  user-supplied public URL works and is the supported path.
+- **Australia** — ASX's announcements feed accepts no issuer filter, one
+  uncached page costs 18–20 seconds and spans about six days, and the
+  per-company endpoint is capped at five mostly-routine items. A single annual
+  report is roughly twelve minutes of paging away, so filing retrieval was
+  removed rather than shipped slow.
+
+Also ruled out: **Switzerland** (SIX's data APIs are commercial), **Egypt**
+(disclosure pages sit behind a CAPTCHA, which this project will not bypass),
+**Hong Kong** (out of scope by decision), and **Argentina**, **Malaysia**,
+**Qatar** (no keyless structured path found at reasonable effort).
+
+## What is being looked at next
+
+No dates are promised. In rough order of how close each one is:
+
+| Candidate | State |
+| --- | --- |
+| `category="current_report"` / `"proxy"` for UK, India, Brazil | Cheapest remaining EdgarTools-parity step — needs only a type-code allowlist per source, no new HTTP calls. These disclosures are already returned unfiltered today |
+| Live verification of South Korea (DART) | Needs a free API key. The connector is written and unit-tested; nothing about it has touched a real response |
+| Pinned reference facts for Sweden and Singapore | Their regression guards currently cannot fire, because both filings derive a total. Closing this needs source-transcribed figures in `benchmarks.py` |
+| **Germany** | Blocked upstream — `filings.xbrl.org` currently lists German filings as unavailable for reliable discovery |
+| **Chile**, **Indonesia**, **Thailand** | On hold. Chile's CMF exposes a legacy PHP form rather than an API and needs fresh live reconnaissance before any build starts |
+| Insider and major-holding coverage for the 13 ESEF national OAMs | Largest remaining lift, lowest priority |
+
+Institutional holdings in the 13F sense are **deliberately out of scope**: no
+general non-US equivalent exists, and the two narrow leads found were not worth
+the surface area. See [FUTURE_INTEGRATIONS.md](FUTURE_INTEGRATIONS.md) for the
+full research trail behind every row above.
 
 ## Documentation
 
