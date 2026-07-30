@@ -50,8 +50,10 @@ goal above, not a restatement of what's shipped.)
 - **Depth**: uneven within the 25. Brazil, India, the UK, and most of the EU
   are close to EdgarTools-caliber (structured, tagged, reconciling). Mexico,
   Colombia, and Peru are partial. Singapore has no structured alternative at
-  all (heuristic PDF only). Canada is discovery-only - SEDAR+ has no stable
-  automated filing-retrieval API.
+  all (heuristic PDF only). Canada and Australia are discovery-only - SEDAR+
+  has no stable automated filing-retrieval API, and ASX's announcements feed
+  accepts no issuer filter, which makes per-company history impractically
+  slow to page.
 - **Scope**: filing discovery, document conversion, financial-statement
   extraction, selected UK/India/Brazil insider and major-holder disclosures,
   and selected full-text/fact-series workflows are shipped. Broad institutional

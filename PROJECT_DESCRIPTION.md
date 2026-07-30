@@ -82,7 +82,7 @@ The current release covers 25 jurisdictions.
 | Americas | Canada | TSX/TSXV and SEDAR+ | Keyless discovery; explicit document import |
 | Americas | Peru | SMV | Keyless |
 | Americas | Colombia | SFC/SIMEV | Keyless |
-| Oceania | Australia | ASX | Keyless |
+| Oceania | Australia | ASX | Keyless discovery only; no keyless filing history |
 
 The company universe is intentionally restricted to public operating companies
 listed on supported stock exchanges. Funds, warrants, ETFs, alternate currency

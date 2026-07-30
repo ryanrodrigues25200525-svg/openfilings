@@ -22,8 +22,10 @@ source documents into Markdown for LLMs.
 - List and download CVM annual and interim financial statements without a key
 - Search current SGX Mainboard and Catalist companies while excluding non-stock products
 - List and download SGX annual reports without a key
-- Search BMV, NSE, Peruvian, Colombian, and ASX-listed issuers
+- Search BMV, NSE, Peruvian, and Colombian issuers
 - List and download their public annual or interim financial reports without a key
+- Search ASX-listed Australian issuers from the official listed-company directory
+  (company discovery only - ASX has no keyless filing history)
 - Search TSX and TSXV operating companies through the official TSX directory
 - Import a user-selected SEDAR+ generated URL or browser-downloaded Canadian PDF
 - List and download keyless Inline XBRL financial reports from filings.xbrl.org
@@ -86,6 +88,13 @@ URL and reconcile investment-critical figures against the source report.
 The scheduled live suite checks one issuer per keyless source. A separate,
 reviewed accuracy benchmark pins selected facts from public annual reports and
 can be run locally with `uv run python -m openfilings.benchmarks`.
+
+The smoke suite's balance-sheet identity check only proves something when the
+filing tags all three totals. Where an issuer leaves one to be derived,
+checking `assets = liabilities + equity` would be circular, so the case is
+reported as extracted-but-unverifiable rather than verified, and the run's
+closing tally states how many of each. At present 13 of 21 financial cases
+verify the identity outright.
 
 ## Setup
 
@@ -248,21 +257,31 @@ BMV annual PDFs and quarterly IFRS JSON archives both convert to Markdown and
 normalized financial statements. Peru reads SMV statement tables through
 bounded official statement operations with limited request concurrency.
 
-Australia has no free company-scoped filing API: ASIC's lodged financial
-reports are a paid-download product, and ASX itself exposes no keyless
-endpoint that filters its public announcements feed to one issuer. OpenFilings
-instead pages ASX's global announcements feed backward in time, keeping only
-the rows for the requested issuer code and the standardised Appendix forms
-that carry financial statements (Annual/Preliminary Final, Half Yearly/
-Appendix 4D, Quarterly Activities/Cashflow). Because the feed has no company
-filter, a heavily-covered large-cap can take several minutes and dozens of
-requests to page back to its last financial report; increase `max_pages` for
-deeper history at the cost of more requests:
+Australia is company-discovery-only. ASX publishes its listed-company
+directory as a free CSV, so search works keylessly across every listed
+issuer, but no keyless path to a company's filing history exists, and this
+was measured rather than assumed:
+
+- ASIC's lodged financial reports are a paid-download product
+  (`connectonline.asic.gov.au`).
+- ASX's public announcements feed accepts no issuer filter - `issuer_code`,
+  `asx_code` and every variant tested are silently ignored - so one
+  company's history can only be recovered by paging the global feed and
+  discarding almost every row. Against the live endpoint an uncached page
+  costs 18-20 seconds and covers about six days, putting a company's last
+  annual report around twelve minutes away and four years of history over
+  an hour.
+- The per-company endpoint on `asx.api.markitdigital.com` returns a hard cap
+  of five items regardless of any count or date parameter, and those are
+  dominated by routine notices, so periodic financial reports are usually
+  absent from it.
+
+`filings` and `fetch` therefore raise a `SourceError` for ASX that points at
+the public announcements page. Use the issuer's own investor-relations site
+or a commercial ASIC/ASX data product for Australian financial reports.
 
 ```bash
 uv run openfilings search "BHP" --source asx
-uv run openfilings filings au_asx_BHP --source asx
-uv run openfilings fetch au_asx_filing_03111504 -o asx-report.md
 ```
 
 Canada supports official TSX/TSXV listed-company discovery plus explicit
@@ -416,11 +435,10 @@ locked-dependency audit run separately. A scheduled keyless smoke job checks
 one listed issuer per ESEF jurisdiction plus FCA, CVM, SGX, BMV, NSE, SMV,
 and SFC - fetching each one's latest filing's financials and verifying the
 fundamental balance-sheet identity (assets = liabilities + equity) holds,
-not just that a filing was found. Japan and Canada check company search
-only: EDINET's filing API requires a key, and SEDAR+ permits browser search
-but not stable automated filing retrieval. ASX is excluded because a quiet
-reporting period can require paging back many announcement-list requests,
-which does not fit a bounded smoke-test timeout.
+not just that a filing was found. Japan, Canada and Australia check company
+search only: EDINET's filing API requires a key, SEDAR+ permits browser
+search but not stable automated filing retrieval, and ASX's announcements
+feed accepts no issuer filter.
 
 Run the same local gates before a release:
 

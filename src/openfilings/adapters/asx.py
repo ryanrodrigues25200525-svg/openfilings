@@ -1,11 +1,29 @@
-"""Official ASX public-announcements client for Australian listed issuers.
+"""Official ASX listed-issuer discovery for Australian companies.
 
-ASX has no free, unauthenticated API scoped to a single company's filing
-history, and ASIC's lodged financial reports are a paid-download product
-(``connectonline.asic.gov.au``). The only free, keyless path is ASX's own
-public announcements feed, which lists every issuer's disclosures but exposes
-no company filter, so a company's history is recovered by paging the global
-feed backward in time and keeping the rows for the requested issuer code.
+Australia is discovery-only, for the same reason Canada is: no keyless path
+to a company's filing history exists.
+
+ASX publishes its listed-company directory as a free CSV, so company search
+is fully supported. Filing retrieval is not, and measurement rather than
+assumption is why:
+
+- ASIC's lodged financial reports are a paid-download product
+  (``connectonline.asic.gov.au``).
+- ASX's public announcements feed lists every issuer's disclosures but
+  accepts no issuer filter - ``issuer_code``, ``asx_code`` and friends are
+  all silently ignored - so a single company's history can only be recovered
+  by paging the global feed backward and discarding ~99.9% of each response.
+  Measured against the live endpoint, one uncached page costs 18-20 seconds
+  and covers about six days, so reaching a company's last annual report runs
+  to roughly twelve minutes and four years of history to over an hour.
+- The per-company endpoint on ``asx.api.markitdigital.com`` returns a hard
+  cap of five items regardless of any count/date parameter, and those are
+  dominated by routine notices (issued capital, security-holder details),
+  so periodic financial reports are usually absent from it entirely.
+
+Both paths were verified against the live endpoints before Australia was
+demoted to discovery-only. Use the company's own investor-relations site or
+a commercial ASIC/ASX data product for Australian financial reports.
 """
 
 from __future__ import annotations
@@ -13,47 +31,28 @@ from __future__ import annotations
 import csv
 import re
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
-from typing import Any
-from urllib.parse import urlparse
+from datetime import UTC, datetime
 
 import httpx
 
 from openfilings.adapters._common import RetryingClient, ranked_matches
 from openfilings.adapters.base import SourceDocument
 from openfilings.exceptions import DocumentUnavailableError, SourceError
-from openfilings.limits import MAX_TAGGED_DOCUMENT_BYTES
 from openfilings.models import Company, Filing, SourceName
 
 LISTED_COMPANIES_URL = (
     "https://asx.api.markitdigital.com/asx-research/1.0/companies/directory/file"
     "?access_subscription=free&csv=true"
 )
-ANNOUNCEMENT_LIST_URL = "https://www.asx.com.au/asx/1/announcement/list"
 COMPANY_PAGE_URL = "https://www.asx.com.au/markets/company/{code}"
-ANNOUNCEMENTS_HOST = "announcements.asx.com.au"
+ANNOUNCEMENTS_URL = "https://www.asx.com.au/markets/trade-our-cash-market/announcements"
 
 _CODE_PATTERN = re.compile(r"^[A-Z0-9]{2,6}$")
-_ANNOUNCEMENT_ID_PATTERN = re.compile(r"^\d{6,10}$")
-_PDF_PATH_PATTERN = re.compile(r"^/asxpdf/\d{8}/pdf/[a-z0-9]+\.pdf$", re.IGNORECASE)
-_PAGE_SIZE = 2000
-_MAX_LIST_BYTES = 4 * 1024 * 1024
 _MAX_REGISTRY_BYTES = 2 * 1024 * 1024
-
-# Headline text ASX issuers use for the standardised Appendix forms that carry
-# financial statements. Anything else is treated as non-financial disclosure.
-_ANNUAL_TERMS = ("annual report", "preliminary final report", "appendix 4e")
-_HALF_YEAR_TERMS = ("half yearly report", "half year report", "appendix 4d")
-_QUARTERLY_TERMS = (
-    "quarterly activities report",
-    "quarterly cashflow report",
-    "appendix 4c",
-    "appendix 5b",
-)
 
 
 class AsxClient(RetryingClient):
-    """Search ASX-listed issuers and retrieve their financial-report PDFs."""
+    """Search ASX-listed issuers. Filing retrieval is not keyless-available."""
 
     source: SourceName = "asx"
 
@@ -62,8 +61,6 @@ class AsxClient(RetryingClient):
         *,
         timeout_seconds: float = 30.0,
         max_retries: int = 2,
-        history_years: int = 4,
-        max_pages: int = 40,
         client: httpx.AsyncClient | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
@@ -74,8 +71,6 @@ class AsxClient(RetryingClient):
             headers={"User-Agent": "openfilings/0.21", "Accept": "application/json"},
             client=client,
         )
-        self._history_years = max(1, min(history_years, 10))
-        self._max_pages = max(1, min(max_pages, 200))
         self._now = now
         self._companies: tuple[Company, ...] | None = None
 
@@ -93,65 +88,20 @@ class AsxClient(RetryingClient):
         category: str | None = "accounts",
         limit: int = 25,
     ) -> list[Filing]:
-        if category and category.casefold() != "accounts":
-            return []
         code = self._code(company_id)
-        company = next(
-            (item for item in await self._company_registry() if item.source_id == code),
-            None,
+        raise SourceError(
+            "ASX filing retrieval has no keyless source: ASIC's lodged financial "
+            "reports are a paid product, and ASX's public announcements feed "
+            "accepts no issuer filter, so one company's history costs minutes of "
+            "full-feed paging per report. Browse this issuer's announcements at "
+            f"{ANNOUNCEMENTS_URL} (ASX code {code}), or use a commercial "
+            "ASIC/ASX data product."
         )
-        if company is None:
-            raise SourceError(f"ASX code {code} is not a current listed issuer.")
-
-        cutoff = self._now() - timedelta(days=365 * self._history_years)
-        end_ms = int(self._now().timestamp() * 1000)
-        matches: dict[str, Filing] = {}
-        for _ in range(self._max_pages):
-            response = await self._request(
-                "GET",
-                ANNOUNCEMENT_LIST_URL,
-                params={"end_date": end_ms, "page_size": _PAGE_SIZE},
-            )
-            if len(response.content) > _MAX_LIST_BYTES:
-                raise SourceError("The ASX announcement feed is unexpectedly large.")
-            rows = self._announcement_rows(response)
-            if not rows:
-                break
-
-            oldest: datetime | None = None
-            for row in rows:
-                released = self._parse_release(row.get("document_release_date"))
-                if released is not None and (oldest is None or released < oldest):
-                    oldest = released
-                if str(row.get("issuer_code", "")).strip().upper() != code:
-                    continue
-                filing = self._filing_from_row(row, company, released)
-                if filing is not None:
-                    matches[filing.id] = filing
-
-            if oldest is None or oldest < cutoff or len(matches) >= limit:
-                break
-            end_ms = int(oldest.timestamp() * 1000) - 1
-
-        filings = sorted(
-            matches.values(), key=lambda filing: filing.filing_date, reverse=True
-        )
-        return filings[: max(1, limit)]
 
     async def download_document(self, document_id: str) -> SourceDocument:
-        source_url = self.document_url(document_id)
-        response = await self._request("GET", source_url)
-        data = response.content
-        if not data:
-            raise DocumentUnavailableError("The ASX announcement PDF was empty.")
-        if len(data) > MAX_TAGGED_DOCUMENT_BYTES:
-            raise DocumentUnavailableError("The ASX announcement PDF exceeds 150 MB.")
-        if not data.startswith(b"%PDF"):
-            raise DocumentUnavailableError(
-                "ASX returned an invalid response instead of the announcement PDF."
-            )
-        return SourceDocument(
-            data=data, media_type="application/pdf", source_url=source_url
+        raise DocumentUnavailableError(
+            "ASX documents are not retrievable through OpenFilings; Australia is "
+            f"company-discovery-only. See {ANNOUNCEMENTS_URL}."
         )
 
     def matches_company_id(self, value: str) -> bool:
@@ -159,21 +109,6 @@ class AsxClient(RetryingClient):
 
     def matches_filing_id(self, value: str) -> bool:
         return value.casefold().startswith("au_asx_filing_")
-
-    @staticmethod
-    def document_url(value: str) -> str:
-        url = value.strip()
-        parsed = urlparse(url)
-        if (
-            parsed.scheme != "https"
-            or parsed.netloc.casefold() != ANNOUNCEMENTS_HOST
-            or _PDF_PATH_PATTERN.fullmatch(parsed.path) is None
-            or parsed.params
-            or parsed.query
-            or parsed.fragment
-        ):
-            raise DocumentUnavailableError("Unsafe ASX announcement PDF URL.")
-        return url
 
     async def _company_registry(self) -> tuple[Company, ...]:
         if self._companies is not None:
@@ -224,76 +159,6 @@ class AsxClient(RetryingClient):
             raise SourceError("The ASX listed-companies CSV contained no issuers.")
         self._companies = tuple(companies)
         return self._companies
-
-    @staticmethod
-    def _announcement_rows(response: httpx.Response) -> list[dict[str, Any]]:
-        try:
-            payload = response.json()
-        except ValueError as exc:
-            raise SourceError("ASX returned invalid announcement-list JSON.") from exc
-        if not isinstance(payload, dict):
-            raise SourceError("ASX returned an invalid announcement-list response.")
-        rows = payload.get("announcement_data", [])
-        if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
-            raise SourceError("ASX returned invalid announcement records.")
-        return rows
-
-    @classmethod
-    def _filing_from_row(
-        cls,
-        row: dict[str, Any],
-        company: Company,
-        released: datetime | None,
-    ) -> Filing | None:
-        header = str(row.get("header", "")).strip()
-        classification = cls._classify(header)
-        if classification is None or released is None:
-            return None
-        announcement_id = str(row.get("id", "")).strip()
-        if not _ANNOUNCEMENT_ID_PATTERN.fullmatch(announcement_id):
-            return None
-        try:
-            source_url = cls.document_url(str(row.get("url", "")))
-        except DocumentUnavailableError:
-            return None
-        pages = row.get("number_of_pages")
-        filing_type = classification
-        return Filing(
-            id=f"au_asx_filing_{announcement_id}",
-            company_id=company.id,
-            source="asx",
-            source_id=announcement_id,
-            title=header,
-            category="accounts",
-            filing_type=filing_type,
-            filing_date=released.date(),
-            published_at=released.astimezone(UTC),
-            pages=pages if isinstance(pages, int) and pages > 0 else None,
-            document_id=source_url,
-            media_type="application/pdf",
-            issuer_name=str(row.get("issuer_full_name", "")).strip() or company.name,
-            language="en",
-            pdf_available=True,
-            source_url=source_url,
-        )
-
-    @staticmethod
-    def _classify(header: str) -> str | None:
-        lowered = header.casefold()
-        if any(term in lowered for term in _ANNUAL_TERMS):
-            return "annual"
-        if any(term in lowered for term in _HALF_YEAR_TERMS):
-            return "half_year"
-        if any(term in lowered for term in _QUARTERLY_TERMS):
-            return "quarterly"
-        return None
-
-    @staticmethod
-    def _parse_release(value: Any) -> datetime | None:
-        try:
-            return datetime.fromisoformat(str(value))
-        except ValueError:
-            return None
 
     @staticmethod
     def _code(value: str) -> str:

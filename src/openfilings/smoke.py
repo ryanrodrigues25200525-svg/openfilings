@@ -50,31 +50,43 @@ SMOKE_CASES = (
     SmokeCase("ESEF Netherlands", "ASML", "esef"),
     SmokeCase("ESEF France", "TotalEnergies", "esef"),
     SmokeCase("ESEF Spain", "Iberdrola", "esef"),
-    SmokeCase("ESEF Italy", "Enel", "esef"),
-    SmokeCase("ESEF Denmark", "Novo Nordisk", "esef"),
+    SmokeCase("ESEF Italy", "Enel", "esef", require_source_balance_sheet=True),
+    SmokeCase(
+        "ESEF Denmark", "Novo Nordisk", "esef", require_source_balance_sheet=True
+    ),
     # Regression guard: AB Volvo's disposal-group held-for-sale liabilities
     # bucket previously fell outside the current+noncurrent derivation.
     SmokeCase("ESEF Sweden", "Aktiebolaget Volvo", "esef"),
-    SmokeCase("ESEF Finland", "Nokia", "esef"),
-    SmokeCase("ESEF Norway", "Equinor", "esef"),
-    SmokeCase("ESEF Poland", "Orlen", "esef"),
-    SmokeCase("ESEF Belgium", "KBC", "esef"),
+    SmokeCase("ESEF Finland", "Nokia", "esef", require_source_balance_sheet=True),
+    SmokeCase("ESEF Norway", "Equinor", "esef", require_source_balance_sheet=True),
+    SmokeCase("ESEF Poland", "Orlen", "esef", require_source_balance_sheet=True),
+    SmokeCase("ESEF Belgium", "KBC", "esef", require_source_balance_sheet=True),
     # OMV's recent filings omit a tagged total_liabilities line item.
     SmokeCase("ESEF Austria", "Verbund", "esef"),
-    SmokeCase("ESEF Luxembourg", "ArcelorMittal", "esef"),
-    SmokeCase("ESEF Portugal", "EDP", "esef"),
+    SmokeCase(
+        "ESEF Luxembourg", "ArcelorMittal", "esef", require_source_balance_sheet=True
+    ),
+    # filings.xbrl.org indexes EDP Renovaveis under both ES and PT for the same
+    # LEI, and the bare query "EDP" ranks the Spain-attributed record first -
+    # name the Portuguese parent so this case actually exercises Portugal.
+    SmokeCase("ESEF Portugal", "EDP, S.A.", "esef", require_source_balance_sheet=True),
     SmokeCase("Brazil CVM", "Petrobras", "cvm"),
     # Regression guard: Keppel's "net assets" presentation previously
     # misread its non-current liabilities subtotal.
     SmokeCase("Singapore SGX", "Keppel Ltd", "sgx"),
-    SmokeCase("Mexico BMV", "AMX", "bmv"),
-    SmokeCase("India NSE", "RELIANCE", "nse"),
-    SmokeCase("Peru SMV", "Alicorp", "smv"),
+    SmokeCase("Mexico BMV", "AMX", "bmv", require_source_balance_sheet=True),
+    SmokeCase("India NSE", "RELIANCE", "nse", require_source_balance_sheet=True),
+    SmokeCase("Peru SMV", "Alicorp", "smv", require_source_balance_sheet=True),
     # A bank specifically, to exercise the CUIF structured balance-sheet
     # path rather than just the PDF-covered income statement.
-    SmokeCase("Colombia SFC", "Banco de Bogota", "sfc"),
-    SmokeCase("Turkey KAP", "Turkcell", "kap"),
-    SmokeCase("Australia ASX", "BHP", "asx"),
+    SmokeCase(
+        "Colombia SFC", "Banco de Bogota", "sfc", require_source_balance_sheet=True
+    ),
+    SmokeCase("Turkey KAP", "Turkcell", "kap", require_source_balance_sheet=True),
+    # ASX publishes a keyless listed-company directory but no keyless filing
+    # history: its announcements feed accepts no issuer filter, so financials
+    # aren't checked here. See the module docstring in adapters/asx.py.
+    SmokeCase("Australia ASX", "BHP", "asx", check_financials=False),
     # SEDAR+ has no public filing-search API by design; only company
     # discovery is keyless, so financials aren't checked here.
     SmokeCase("Canada TSX", "Shopify", "sedar", check_financials=False),
@@ -195,6 +207,18 @@ async def _main() -> None:
             f"PASS\t{result.label}\t{result.company_id}\t"
             f"{result.filing_id}\t{result.identity_check}"
         )
+    # "PASS ... not_applicable" only means the source responded and something
+    # was extracted - the identity itself proved nothing, because the filing
+    # left one of the three totals to be derived. Count that explicitly so a
+    # green run is not mistaken for full reconciliation coverage.
+    held = sum(1 for result in results if result.identity_check == "held")
+    search_only = sum(1 for result in results if result.identity_check == "search_only")
+    unverified = len(results) - held - search_only
+    print(
+        f"\n{len(results)} cases: {held} balance-sheet identity verified, "
+        f"{unverified} extracted but unverifiable (a total was derived), "
+        f"{search_only} company-search only."
+    )
 
 
 def main() -> None:

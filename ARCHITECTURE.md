@@ -149,7 +149,7 @@ normalized models and follow the same service pipeline.
 | `SmvClient` | Peru | SMV issuer and financial-statement data |
 | `SfcClient` | Colombia | SFC/SIMEV issuer and filing services |
 | `DartClient` | South Korea | OPENDART corp-code registry and filings; requires `DART_API_KEY` |
-| `AsxClient` | Australia | ASX public announcements feed |
+| `AsxClient` | Australia | ASX listed-company directory (discovery only) |
 | `KapClient` | Turkey | KAP public disclosure feed and rendered XBRL-viewer tables |
 
 Adapters own source-specific URL construction, response parsing, identifier

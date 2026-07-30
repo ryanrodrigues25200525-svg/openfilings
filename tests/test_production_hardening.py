@@ -31,12 +31,14 @@ def test_keyless_smoke_matrix_covers_every_keyless_source() -> None:
         "asx",
     }
     assert all(case.query and case.label for case in SMOKE_CASES)
-    # SEDAR+ and EDINET have no keyless filing-search API (SEDAR+ blocks
-    # automated queries; EDINET's filing API needs a paid-free key), so
-    # only company discovery is checked for them.
+    # SEDAR+, EDINET and ASX have no keyless filing-search API (SEDAR+ blocks
+    # automated queries; EDINET's filing API needs a free key; ASX's
+    # announcements feed accepts no issuer filter), so only company discovery
+    # is checked for them.
     assert {case.source for case in SMOKE_CASES if not case.check_financials} == {
         "sedar",
         "edinet",
+        "asx",
     }
 
 

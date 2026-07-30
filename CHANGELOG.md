@@ -4,6 +4,28 @@ All notable changes to OpenFilings are documented in this file.
 
 ## Unreleased
 
+### Fixed
+
+- The live smoke suite reported `PASS ... not_applicable` for a third of its
+  cases, which read as success but proved only that a filing was fetched. The
+  balance-sheet identity is skipped whenever one of the three totals is
+  derived rather than tagged, since checking `assets = liabilities + equity`
+  against a total derived as `assets - equity` is circular. The run now ends
+  with an explicit tally of verified / unverifiable / search-only cases, and
+  `require_source_balance_sheet` - which existed but was enabled nowhere - is
+  now set on the thirteen cases confirmed live to expose all three totals as
+  source facts, so a silent degradation to derived values fails the run
+  instead of passing it. Sweden (AB Volvo) and Singapore (Keppel), the two
+  named regression guards, are among the cases that cannot verify: both
+  filings leave a total to be derived, so their guard value is limited to
+  extraction not crashing. Closing that needs pinned reference facts in
+  `benchmarks.py`, which currently covers two issuers.
+- The "ESEF Portugal" smoke case was exercising Spain. filings.xbrl.org
+  indexes EDP Renovaveis under both `es_` and `pt_` company IDs for the same
+  LEI, and the bare query "EDP" ranked the Spain-attributed record above the
+  Portuguese parent. The case now names EDP, S.A. explicitly and resolves to
+  `pt_lei_529900CLC3WDMGI9VH80`.
+
 ### Added
 
 - Added six more keyless ESEF markets - Norway, Poland, Belgium, Austria,
@@ -50,14 +72,27 @@ All notable changes to OpenFilings are documented in this file.
   against DART's documented request/response shapes and verified with
   mocked-response tests only; no live API key was available in this
   session, so no live company or financial data has been verified.
-- Added a keyless ASX listed-company and financial-report adapter for
-  Australia. ASX exposes no company-scoped filing API and ASIC's lodged
-  financial reports are a paid-download product, so discovery pages ASX's
-  public global announcements feed backward in time and keeps only the rows
-  for the requested issuer code, feeding the existing heuristic PDF-statement
-  extractor. Switzerland was investigated and not added: SIX's data APIs are
-  commercial, and ad hoc disclosures are pushed to each issuer's own website
-  with no central free index or predictable document host to build against.
+- Added a keyless ASX listed-company adapter for Australia, covering company
+  discovery only. Filing retrieval was built first against ASX's global
+  announcements feed and then removed after measuring it: the feed accepts no
+  issuer filter (`issuer_code`, `asx_code` and every variant tested are
+  silently ignored), one uncached page costs 18-20 seconds and covers about
+  six days, so a single company's last annual report sat roughly twelve
+  minutes and forty requests away - and the adapter's `history_years=4`
+  default was unreachable in practice, since its page budget only spanned
+  about six months. The per-company `asx.api.markitdigital.com` endpoint is
+  capped at five items regardless of parameters and is dominated by routine
+  notices. ASIC's lodged reports are a paid-download product. Australia is
+  therefore discovery-only, like Canada, and `list_filings`/`download_document`
+  raise an error naming the public alternative. Switzerland was investigated
+  and not added: SIX's data APIs are commercial, and ad hoc disclosures are
+  pushed to each issuer's own website with no central free index or
+  predictable document host to build against.
+- Fixed ASX company discovery, which returned nothing: the
+  `ASXListedCompanies.csv` endpoint no longer resolves. Discovery now reads
+  the markitdigital listed-company directory and matches header columns
+  case- and order-insensitively, since ASX has shipped both column orders
+  and "GICS"/"GICs" casing.
 - Added a keyless Turkey connector for KAP (the Public Disclosure Platform):
   company search and disclosure listing use KAP's own public website
   endpoints (not the paid, contract-gated Rest API data-distribution

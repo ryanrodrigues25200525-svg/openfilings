@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 import httpx
 import pytest
 
@@ -11,12 +9,6 @@ from openfilings.service import OpenFilingsService
 from openfilings.storage.sqlite import SQLiteCache
 
 LISTED_COMPANIES_PATH = httpx.URL(LISTED_COMPANIES_URL).path
-ANNOUNCEMENT_LIST_PATH = "/asx/1/announcement/list"
-PDF_URL = "https://announcements.asx.com.au/asxpdf/20260716/pdf/071rnjvs39bf7r.pdf"
-
-
-def _now() -> datetime:
-    return datetime(2026, 7, 24, tzinfo=UTC)
 
 
 @pytest.mark.asyncio
@@ -46,127 +38,6 @@ async def test_search_companies_matches_code_and_name() -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_filings_pages_backward_and_filters_to_financial_reports() -> None:
-    requested_end_dates: list[str] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == LISTED_COMPANIES_PATH:
-            return httpx.Response(200, content=_listed_companies_csv())
-        assert request.url.path == ANNOUNCEMENT_LIST_PATH
-        end_date = request.url.params["end_date"]
-        requested_end_dates.append(end_date)
-        if len(requested_end_dates) == 1:
-            return httpx.Response(200, json=_recent_page())
-        return httpx.Response(200, json=_older_page())
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        source = AsxClient(client=http, now=_now)
-        filings = await source.list_filings("au_asx_BHP")
-
-    assert len(requested_end_dates) == 2
-    assert requested_end_dates[1] == str(
-        int(datetime(2026, 7, 20, 9, 0, 0, tzinfo=UTC).timestamp() * 1000) - 1
-    )
-    assert len(filings) == 1
-    filing = filings[0]
-    assert filing.id == "au_asx_filing_03111504"
-    assert filing.company_id == "au_asx_BHP"
-    assert filing.source == "asx"
-    assert filing.source_id == "03111504"
-    assert filing.title == "Preliminary Final Report"
-    assert filing.category == "accounts"
-    assert filing.filing_type == "annual"
-    assert filing.pages == 40
-    assert filing.document_id == PDF_URL
-    assert filing.media_type == "application/pdf"
-    assert filing.issuer_name == "BHP GROUP LIMITED"
-    assert filing.pdf_available is True
-    assert filing.xbrl_available is False
-    assert filing.source_url == PDF_URL
-
-
-@pytest.mark.asyncio
-async def test_list_filings_rejects_unknown_code() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, content=_listed_companies_csv())
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        source = AsxClient(client=http, now=_now)
-        with pytest.raises(SourceError, match="not a current listed issuer"):
-            await source.list_filings("au_asx_ZZZ")
-
-
-@pytest.mark.asyncio
-async def test_list_filings_ignores_non_financial_category() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, content=_listed_companies_csv())
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        source = AsxClient(client=http, now=_now)
-        filings = await source.list_filings("au_asx_BHP", category="disclosure")
-
-    assert filings == []
-
-
-@pytest.mark.asyncio
-async def test_download_document_validates_pdf_host_and_magic_bytes() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        assert str(request.url) == PDF_URL
-        return httpx.Response(200, content=b"%PDF-1.4 ASX report")
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        source = AsxClient(client=http)
-        document = await source.download_document(PDF_URL)
-
-    assert document.data.startswith(b"%PDF")
-    assert document.media_type == "application/pdf"
-    assert document.source_url == PDF_URL
-
-
-def test_document_url_rejects_external_hosts_and_unexpected_paths() -> None:
-    with pytest.raises(DocumentUnavailableError, match="Unsafe"):
-        AsxClient.document_url("https://example.test/report.pdf")
-    with pytest.raises(DocumentUnavailableError, match="Unsafe"):
-        AsxClient.document_url(
-            "https://announcements.asx.com.au/asxpdf/20260716/pdf/../secret.pdf"
-        )
-
-
-@pytest.mark.asyncio
-async def test_service_runs_complete_asx_search_list_and_markdown_pipeline(
-    tmp_path,
-) -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == LISTED_COMPANIES_PATH:
-            return httpx.Response(200, content=_listed_companies_csv())
-        if request.url.path == ANNOUNCEMENT_LIST_PATH:
-            return httpx.Response(200, json=_recent_page())
-        assert str(request.url) == PDF_URL
-        return httpx.Response(200, content=b"%PDF-1.4 ASX report")
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        asx = AsxClient(client=http, now=_now)
-        cache = SQLiteCache(tmp_path / "cache.sqlite3")
-        service = OpenFilingsService(
-            cache,
-            market_sources=(asx,),
-            converter=lambda _: "## Financial statements\n\nRevenue was AUD 1.0B.",
-        )
-
-        company = await service.company("BHP", source="asx")
-        filings = await company.get_filings(source="asx", limit=1)
-        filing = filings.latest()
-        assert filing is not None
-        content = await filing.markdown()
-        cache.close()
-
-    assert company.id == "au_asx_BHP"
-    assert filing.id == "au_asx_filing_03111504"
-    assert "## Financial statements" in content
-    assert "Source system: `asx`" in content
-
-
-@pytest.mark.asyncio
 async def test_search_companies_reads_current_directory_csv_layout() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == LISTED_COMPANIES_PATH
@@ -187,6 +58,61 @@ async def test_search_companies_reads_current_directory_csv_layout() -> None:
     assert companies[0].company_type == "Materials"
 
 
+@pytest.mark.asyncio
+async def test_list_filings_explains_that_australia_is_discovery_only() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        raise AssertionError("discovery-only ASX must not issue filing requests")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        source = AsxClient(client=http)
+        with pytest.raises(SourceError, match="no keyless source"):
+            await source.list_filings("au_asx_BHP")
+
+
+@pytest.mark.asyncio
+async def test_list_filings_rejects_a_malformed_company_id() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        raise AssertionError("a malformed ID must fail before any request")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        source = AsxClient(client=http)
+        with pytest.raises(SourceError, match="shaped like au_asx_BHP"):
+            await source.list_filings("not-an-asx-id")
+
+
+@pytest.mark.asyncio
+async def test_download_document_reports_australia_as_discovery_only() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        raise AssertionError("discovery-only ASX must not fetch documents")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        source = AsxClient(client=http)
+        with pytest.raises(DocumentUnavailableError, match="discovery-only"):
+            await source.download_document("au_asx_filing_03111504")
+
+
+@pytest.mark.asyncio
+async def test_service_searches_asx_companies_and_reports_no_filing_source(
+    tmp_path,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == LISTED_COMPANIES_PATH
+        return httpx.Response(200, content=_listed_companies_csv())
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        asx = AsxClient(client=http)
+        cache = SQLiteCache(tmp_path / "cache.sqlite3")
+        service = OpenFilingsService(cache, market_sources=(asx,))
+
+        company = await service.company("BHP", source="asx")
+        with pytest.raises(SourceError, match="no keyless source"):
+            await company.get_filings(source="asx", limit=1)
+        cache.close()
+
+    assert company.id == "au_asx_BHP"
+    assert company.name == "BHP GROUP LIMITED"
+
+
 def _listed_companies_csv() -> bytes:
     return (
         b"ASX listed companies as at Fri Jul 24 05:07:04 AEST 2026\n"
@@ -195,39 +121,3 @@ def _listed_companies_csv() -> bytes:
         b'"BHP GROUP LIMITED","BHP","Materials"\n'
         b'"CSL LIMITED","CSL","Pharmaceuticals, Biotechnology & Life Sciences"\n'
     )
-
-
-def _recent_page() -> dict[str, object]:
-    return {
-        "announcement_data": [
-            {
-                "id": "03111504",
-                "document_release_date": "2026-07-20T19:00:00+1000",
-                "url": PDF_URL,
-                "header": "Preliminary Final Report",
-                "market_sensitive": True,
-                "number_of_pages": 40,
-                "size": "633KB",
-                "issuer_code": "BHP",
-                "issuer_full_name": "BHP GROUP LIMITED",
-            },
-            {
-                "id": "03111600",
-                "document_release_date": "2026-07-21T10:00:00+1000",
-                "url": (
-                    "https://announcements.asx.com.au/asxpdf/20260721/"
-                    "pdf/071other0000.pdf"
-                ),
-                "header": "Change in substantial holding",
-                "market_sensitive": False,
-                "number_of_pages": 3,
-                "size": "50KB",
-                "issuer_code": "CSL",
-                "issuer_full_name": "CSL LIMITED",
-            },
-        ]
-    }
-
-
-def _older_page() -> dict[str, object]:
-    return {"announcement_data": []}
