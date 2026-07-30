@@ -105,6 +105,58 @@ general non-US equivalent exists, and the two narrow leads found were not worth
 the surface area. See [FUTURE_INTEGRATIONS.md](FUTURE_INTEGRATIONS.md) for the
 full research trail behind every row above.
 
+## Test runs
+
+Three layers, and they prove different things. Real output, not illustrative.
+
+### Unit tests — `uv run pytest`
+
+```
+219 passed, 7 warnings in 1.65s
+```
+
+Fast and offline: every source is a recorded fixture, so this catches parsing
+and mapping regressions but says nothing about whether a regulator's endpoint
+still exists or still returns the same shape.
+
+### Live smoke — `uv run python -m openfilings.smoke`
+
+One issuer per keyless source, against the real endpoints, ending in a tally
+of what was actually proved:
+
+```
+PASS  ESEF Italy       it_lei_2W8N8UU78PMDQKZENC08  it_esef_18316   held
+PASS  ESEF Finland     fi_lei_549300A0JPRWG1KI7U06  fi_esef_23894   held
+PASS  ESEF Portugal    pt_lei_529900CLC3WDMGI9VH80  pt_esef_19216   held
+PASS  India NSE        in_nse_RELIANCE              in_nse_filing_29285  held
+PASS  Colombia SFC     co_sfc_001_001               co_sfc_filing_124322 held
+PASS  Turkey KAP       tr_kap_4028e4a1486ec80a...   tr_kap_1605247  held
+PASS  ESEF Sweden      se_lei_549300HGV012CNC8JD22  se_esef_18913
+      not_applicable (no common source-extracted balance-sheet period)
+PASS  Singapore SGX    sg_sgx_1U68                  sg_sgx_CMLEN559K1LSH1QR
+      not_applicable (no common source-extracted balance-sheet period)
+PASS  Australia ASX    au_asx_BHP                   None            search_only
+
+24 cases: 13 balance-sheet identity verified, 8 extracted but unverifiable
+(a total was derived), 3 company-search only.
+```
+
+`not_applicable` is deliberately not dressed up as a pass. Where a filing
+leaves one of the three totals to be derived, checking `assets = liabilities +
+equity` against a total computed as `assets - equity` is circular, so the case
+proves only that extraction ran. The thirteen that do verify are asserted
+strictly — degrading to a derived total fails the run.
+
+### Multi-issuer probe
+
+One issuer per market is the suite's real limit: it proves an endpoint
+responds, not that a market works. Probing 42 issuers the smoke suite never
+touches found four defects it could never have caught, including Indian PDF
+figures understated by a factor of ten million and equity totals silently
+dropping non-controlling interests. Both are fixed; see the
+[changelog](CHANGELOG.md). Broadening this into a repeatable check is open
+work, not something the suite does today.
+
 ## Documentation
 
 - [Project description](PROJECT_DESCRIPTION.md)
@@ -526,6 +578,106 @@ suggested next steps where another focused call is useful. `filing_sections`
 remains as a compatibility alias that returns headings without section bodies.
 
 Start the stdio server with `uv run openfilings serve`.
+
+## Working with an AI agent
+
+Every transcript below is a real call against the live MCP server, trimmed
+only for width. The point of the design is that an agent never has to pull a
+300-page annual report into its context to answer a question about it.
+
+### Resolve, list, extract
+
+*"Give me Ferrari's latest balance sheet."* Three calls, no document download:
+
+```jsonc
+// companies_search {"query": "Ferrari", "source": "esef", "limit": 3}
+{"companies": [
+  {"id": "nl_lei_549300RIVY5EX8RCON76", "name": "FERRARI N.V.", "market": "NL"},
+  {"id": "nl_lei_984500Y7F9EB3DRC4406", "name": "FERRARI GROUP PLC", "market": "NL"}],
+ "next_steps": ["Use filings_list with a company id to discover recent filings."]}
+
+// filings_list {"company_id": "nl_lei_549300RIVY5EX8RCON76", "source": "esef"}
+{"filings": [{"id": "nl_esef_23727", "period_end": "2025-12-31",
+              "filing_date": "2026-03-04", "xbrl_available": true}]}
+
+// filing_financials {"filing_id": "nl_esef_23727", "statements": ["balance_sheet"]}
+{"extraction_method": "inline-xbrl-stream", "fact_count": 479,
+ "statements": [{"currency": "EUR", "line_items": [
+   {"code": "total_assets",      "values": {"2025-12-31": "9628352000"}},
+   {"code": "total_equity",      "values": {"2025-12-31": "3914742000"}},
+   {"code": "total_liabilities", "values": {"2025-12-31": "5713610000"}}]}],
+ "validation": {"ok": true, "checks_passed": 4, "checks_failed": 0}}
+```
+
+3,914,742,000 + 5,713,610,000 = 9,628,352,000. The identity holds, and the
+agent is told so rather than having to check.
+
+### The agent is told when the data is doubtful
+
+This is the part that matters for an autonomous agent. Unilever's Form 20-F is
+a PDF whose tables this extractor reads badly. It does not quietly return the
+numbers:
+
+```jsonc
+// data_quality_report {"filing_id": "uk_nsm_NI-000140673"}
+{"extraction_method": "pdf-aligned-text", "fact_count": 34,
+ "provenance_counts": {"pdf_table": 34},
+ "confidence": {"minimum": 75, "maximum": 75},
+ "validation": {"ok": false, "checks_passed": 0, "checks_failed": 4, "findings": [
+   {"rule_id": "EQ.accounting_equation", "description": "assets = liabilities + equity",
+    "period": "2025-12-31", "expected": 102305000000000, "actual": 79750000000000,
+    "difference": -22555000000000},
+   {"rule_id": "FOOT.bs.total_liabilities",
+    "description": "total liabilities = current + non-current liabilities",
+    "period": "2025-12-31", "expected": 57195000000000, "actual": 79750000000000}]}}
+```
+
+`ok: false` with the failing rule, the period, and the size of the gap. An
+agent can refuse to answer, fall back to `filing_search` over the document
+text, or escalate — instead of reporting a confident wrong number. Compare the
+`confidence: 75` / `pdf_table` provenance above with Ferrari's tagged-XBRL
+`confidence: 100`.
+
+### Unsupported operations fail with the reason and the alternative
+
+```jsonc
+// filings_list {"company_id": "au_asx_BHP", "source": "asx"}
+{"success": false, "error_code": "SOURCEERROR",
+ "error": "ASX filing retrieval has no keyless source: ASIC's lodged financial
+  reports are a paid product, and ASX's public announcements feed accepts no
+  issuer filter... Browse this issuer's announcements at
+  https://www.asx.com.au/markets/trade-our-cash-market/announcements (ASX code
+  BHP), or use a commercial ASIC/ASX data product."}
+```
+
+### Cross-issuer and ownership questions
+
+Not scoped to one company:
+
+```jsonc
+// disclosures_search {"keyword": "climate transition plan", "source": "fca_nsm"}
+{"filings": [{"id": "uk_nsm_202503120300PR_NEWS_UKDISCLO_0006",
+              "title": "FirstGroup Plc - Publication of Climate Transition Plan",
+              "filing_date": "2025-03-12"}]}
+
+// insider_dealings_list {"company_id": "uk_lei_549300MKFYEKVRWML317", "limit": 1}
+{"dealings": [{"person_name": "Srinivas Phatak",
+               "position": "Chief Financial Officer (Director)",
+               "isin": "GB00BVZK7T90",
+               "price_volume": [{"price": "45.39243", "currency": "GBP", "volume": 474}]}]}
+```
+
+### Connecting it
+
+```jsonc
+// claude_desktop_config.json / .mcp.json
+{"mcpServers": {"openfilings": {"command": "uv",
+  "args": ["run", "--directory", "/path/to/openfilings", "openfilings", "serve"]}}}
+```
+
+The server is long-running, so restart it after upgrading — a running process
+keeps serving the code it started with. Cached facts also survive an upgrade;
+pass `refresh: true` to re-extract a filing whose figures a fix should change.
 
 ## Production checks
 
