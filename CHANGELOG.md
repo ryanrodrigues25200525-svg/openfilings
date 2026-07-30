@@ -28,6 +28,11 @@ All notable changes to OpenFilings are documented in this file.
   "ørsted a s" once folded. Matching now transliterates them. This is
   applied only to search comparison, since `normalize_text` also builds
   KAP's company URLs.
+- The live smoke suite's Colombia issuer went stale: SFC's registry now
+  returns no "ACCION" (listed equity) records for Banco de Bogota at all,
+  only bonds and certificates, so the case failed to resolve a company. It
+  now uses Davivienda. This is the scheduled suite doing its job - the
+  regulator's own universe changed, and nothing in this repo did.
 - Peru's issuer universe was whatever appeared in a single year of SMV's
   summary dataset, and the registry stopped at the first year returning any
   rows. Early in a calendar year that is only the issuers who have already
@@ -38,7 +43,6 @@ All notable changes to OpenFilings are documented in this file.
   "Jeronimo" could never match "JERÓNIMO MARTINS SGPS SA" across all 14
   ESEF markets. On an empty result it now retries on a short accent-free
   fragment and ranks the candidates locally, where folding applies.
-
 - The live smoke suite reported `PASS ... not_applicable` for a third of its
   cases, which read as success but proved only that a filing was fetched. The
   balance-sheet identity is skipped whenever one of the three totals is

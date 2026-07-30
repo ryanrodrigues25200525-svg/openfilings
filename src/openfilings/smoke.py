@@ -78,10 +78,12 @@ SMOKE_CASES = (
     SmokeCase("India NSE", "RELIANCE", "nse", require_source_balance_sheet=True),
     SmokeCase("Peru SMV", "Alicorp", "smv", require_source_balance_sheet=True),
     # A bank specifically, to exercise the CUIF structured balance-sheet
-    # path rather than just the PDF-covered income statement.
-    SmokeCase(
-        "Colombia SFC", "Banco de Bogota", "sfc", require_source_balance_sheet=True
-    ),
+    # path rather than just the PDF-covered income statement. Banco de Bogota
+    # was the original pick and had to be replaced: SFC's issuer registry now
+    # returns no "ACCION" (listed equity) records for it at all, only bonds
+    # and certificates, so it is no longer a listed-equity issuer this
+    # library covers. Davivienda is the stable equivalent.
+    SmokeCase("Colombia SFC", "Davivienda", "sfc", require_source_balance_sheet=True),
     SmokeCase("Turkey KAP", "Turkcell", "kap", require_source_balance_sheet=True),
     # ASX publishes a keyless listed-company directory but no keyless filing
     # history: its announcements feed accepts no issuer filter, so financials

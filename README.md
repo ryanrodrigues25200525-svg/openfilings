@@ -125,11 +125,12 @@ One issuer per keyless source, against the real endpoints, ending in a tally
 of what was actually proved:
 
 ```
-PASS  ESEF Italy       it_lei_2W8N8UU78PMDQKZENC08  it_esef_18316   held
+PASS  ESEF Italy       it_lei_WOCMU6HCI0OJWNPRZS33  it_esef_18316   held
 PASS  ESEF Finland     fi_lei_549300A0JPRWG1KI7U06  fi_esef_23894   held
 PASS  ESEF Portugal    pt_lei_529900CLC3WDMGI9VH80  pt_esef_19216   held
-PASS  India NSE        in_nse_RELIANCE              in_nse_filing_29285  held
-PASS  Colombia SFC     co_sfc_001_001               co_sfc_filing_124322 held
+PASS  Mexico BMV       mx_bmv_6024                  mx_bmv_filing_1575696  held
+PASS  India NSE        in_nse_RELIANCE              in_nse_filing_29285    held
+PASS  Colombia SFC     co_sfc_001_039               co_sfc_filing_125473   held
 PASS  Turkey KAP       tr_kap_4028e4a1486ec80a...   tr_kap_1605247  held
 PASS  ESEF Sweden      se_lei_549300HGV012CNC8JD22  se_esef_18913
       not_applicable (no common source-extracted balance-sheet period)
