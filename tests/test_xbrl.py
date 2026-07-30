@@ -343,3 +343,22 @@ def _ixbrl() -> bytes:
           scale="3" sign="-">210</ix:nonFraction>
       </body>
     </html>"""
+
+
+def test_concept_priority_prefers_the_real_equity_total_over_the_parent_line() -> None:
+    """IFRS balance sheets tag both the parent-attributable equity and the
+    real total. Whichever the extractor keeps must be decided by the alias
+    table, not document order: a Turkish balance sheet lists the parent line
+    first, so order-based selection silently drops non-controlling interests
+    and breaks assets = liabilities + equity by exactly the NCI. Confirmed
+    live on BIM (KAP), whose equity was understated by 1,817,555 TRY."""
+    from openfilings.xbrl.mappings import concept_priority, definition_for_concept
+
+    total = "ifrs-full:Equity"
+    parent = "ifrs-full:EquityAttributableToOwnersOfParent"
+
+    assert definition_for_concept(total).code == "total_equity"
+    assert definition_for_concept(parent).code == "total_equity"
+    assert concept_priority(total) < concept_priority(parent)
+    # An unmapped concept must rank worse than any real alias.
+    assert concept_priority("ifrs-full:NotALineItem") > concept_priority(parent)

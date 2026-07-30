@@ -308,3 +308,30 @@ def definition_for_concept(concept: str) -> LineItemDefinition | None:
 
     local_name = concept.rsplit(":", 1)[-1]
     return _BY_CONCEPT.get(_normalize_concept(local_name))
+
+
+def concept_priority(concept: str) -> int:
+    """Rank a concept among the aliases of the line item it maps to.
+
+    Lower is better; the alias tuples are written most-authoritative first.
+    A statement can legitimately tag several aliases of one line item - an
+    IFRS balance sheet carries both ``EquityAttributableToOwnersOfParent``
+    and the real ``Equity`` total - and taking whichever appears first in
+    the document silently picks the parent-only figure for any group with
+    non-controlling interests, breaking assets = liabilities + equity by
+    exactly the NCI. Confirmed live on BIM (Turkey/KAP).
+    """
+
+    definition = definition_for_concept(concept)
+    if definition is None:
+        return len(_LONGEST_ALIAS_TUPLE)
+    local_name = _normalize_concept(concept.rsplit(":", 1)[-1])
+    for index, alias in enumerate(definition.concepts):
+        if _normalize_concept(alias) == local_name:
+            return index
+    return len(definition.concepts)
+
+
+_LONGEST_ALIAS_TUPLE = max(
+    (definition.concepts for definition in LINE_ITEMS), key=len, default=()
+)

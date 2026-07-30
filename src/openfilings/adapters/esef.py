@@ -13,7 +13,7 @@ from urllib.parse import quote, urljoin, urlparse
 
 import httpx
 
-from openfilings.adapters._common import bounded_request
+from openfilings.adapters._common import bounded_request, normalize_text, ranked_matches
 from openfilings.adapters.base import SourceDocument
 from openfilings.exceptions import DocumentUnavailableError, SourceError
 from openfilings.limits import MAX_TAGGED_DOCUMENT_BYTES
@@ -25,6 +25,12 @@ CONTENT_BASE_URL = "https://filings.xbrl.org/"
 _LEI_PATTERN = re.compile(r"^[A-Z0-9]{18}[0-9]{2}$")
 _FILING_ID_PATTERN = re.compile(r"^\d+$")
 _LANGUAGE_PATTERN = re.compile(r"[-_]([a-z]{2})(?:/|\.x?html?$)", re.IGNORECASE)
+# Accent-mismatch fallback: how many leading characters to match on, and how
+# many candidates to pull back for local ranking. Three characters keeps the
+# upstream result set small enough for one page while still surviving a
+# diacritic in the fourth position or later.
+_FALLBACK_PREFIX = 3
+_FALLBACK_PAGE_SIZE = 40
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,11 +170,57 @@ class EsefClient:
             return []
 
         lei = self.normalize_lei(clean_query, required=False)
+        if lei:
+            return await self._entity_query(lei, limit=limit, lei=True)
+
+        companies = await self._entity_query(f"%{clean_query}%", limit=limit)
+        if companies:
+            return companies
+
+        # filings.xbrl.org matches names with a byte-wise SQL ilike, so a
+        # query missing a diacritic never matches ("Jeronimo" against
+        # "JERONIMO MARTINS SGPS SA" with an accented O). Retry on a short
+        # accent-free prefix, then rank locally where normalize_text folds
+        # the diacritics away. Only runs when the direct match found nothing.
+        for pattern in self._fallback_patterns(clean_query):
+            candidates = await self._entity_query(
+                pattern, limit=_FALLBACK_PAGE_SIZE, rank=False
+            )
+            if not candidates:
+                continue
+            records = [((company.name,), company) for company in candidates]
+            matches = ranked_matches(clean_query, records, limit=limit)
+            if matches:
+                return matches
+        return []
+
+    @staticmethod
+    def _fallback_patterns(query: str) -> list[str]:
+        """Short leading fragments likely to survive an accent mismatch."""
+
+        first = query.split()[0] if query.split() else query
+        patterns: list[str] = []
+        for candidate in (
+            first[:_FALLBACK_PREFIX],
+            normalize_text(first)[:_FALLBACK_PREFIX],
+            # Skip the first character too: a name whose *leading* letter is
+            # the accented one ("Orsted" against "ORSTED A/S" with a slashed
+            # O) has no usable accent-free prefix at all.
+            normalize_text(first)[1 : 1 + _FALLBACK_PREFIX],
+        ):
+            fragment = candidate.strip()
+            if len(fragment) >= _FALLBACK_PREFIX and f"%{fragment}%" not in patterns:
+                patterns.append(f"%{fragment}%")
+        return patterns
+
+    async def _entity_query(
+        self, value: str, *, limit: int, lei: bool = False, rank: bool = True
+    ) -> list[Company]:
         filters = [
             {
                 "name": "identifier" if lei else "name",
                 "op": "eq" if lei else "ilike",
-                "val": lei or f"%{clean_query}%",
+                "val": value,
             },
             {
                 "name": "filings.country",
@@ -192,7 +244,7 @@ class EsefClient:
                 continue
             seen.add(company.lei or company.source_id)
             companies.append(company)
-            if len(companies) >= max(1, limit):
+            if rank and len(companies) >= max(1, limit):
                 break
         return companies
 

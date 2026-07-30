@@ -29,7 +29,7 @@ from openfilings.models import (
     ReportingPeriod,
     StatementType,
 )
-from openfilings.xbrl.mappings import definition_for_concept
+from openfilings.xbrl.mappings import concept_priority, definition_for_concept
 
 _STATEMENT_TITLES: dict[StatementType, str] = {
     "income_statement": "Income statement",
@@ -125,7 +125,13 @@ def _extract_one_table(
         if not values:
             continue
         bucket = items_by_statement.setdefault(definition.statement_type, {})
-        if definition.code in bucket:
+        # A Turkish balance sheet lists equity attributable to the parent
+        # above the real total, so first-in-document-order would drop the
+        # NCI. Keep whichever concept ranks higher in the alias table.
+        existing = bucket.get(definition.code)
+        if existing is not None and concept_priority(
+            existing.concept
+        ) <= concept_priority(concept):
             continue
         bucket[definition.code] = FinancialLineItem(
             code=definition.code,

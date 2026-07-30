@@ -35,6 +35,10 @@ _STATEMENTS = (
     ("RI", "Estado de resultados integrales"),
 )
 _PAGE_SIZE = 500
+# How many recent years of SMV's summary dataset to merge into the issuer
+# universe. Two covers an issuer that has not filed yet this calendar year
+# without paying for a full decade of requests on first search.
+_REGISTRY_YEARS = 2
 _MAX_PAGES = 100
 _MAX_CONCURRENT_STATEMENTS = 2
 _STATEMENT_OPERATIONS = {
@@ -168,6 +172,14 @@ class SmvClient(RetryingClient):
     async def _company_registry(self) -> tuple[Company, ...]:
         if self._companies is not None:
             return self._companies
+        # The issuer universe is whoever appears in SMV's summary financial
+        # dataset, so a single year is a biased sample: early in a calendar
+        # year only the handful of issuers who have already filed are
+        # present, and everyone else becomes unfindable. Confirmed live -
+        # one year returned 94 issuers and omitted Cementos Pacasmayo
+        # entirely. Merge the most recent years that carry data instead.
+        companies: dict[str, Company] = {}
+        years_with_data = 0
         for year in range(self._today().year, max(self._today().year - 10, 2012), -1):
             rows: list[dict[str, Any]] = []
             for information_type in ("I", "C"):
@@ -179,16 +191,23 @@ class SmvClient(RetryingClient):
                         summary=True,
                     )
                 )
-            companies: dict[str, Company] = {}
+            found = False
             for row in rows:
                 company = self._company_from_row(row)
                 if company is not None:
                     companies.setdefault(company.id, company)
-            if companies:
+                    found = True
+            if not found:
+                continue
+            if self._company_year is None:
                 self._company_year = year
-                self._companies = tuple(companies.values())
-                return self._companies
-        raise SourceError("SMV returned no recent public-issuer financial dataset.")
+            years_with_data += 1
+            if years_with_data >= _REGISTRY_YEARS:
+                break
+        if not companies:
+            raise SourceError("SMV returned no recent public-issuer financial dataset.")
+        self._companies = tuple(companies.values())
+        return self._companies
 
     async def _financial_rows(
         self,

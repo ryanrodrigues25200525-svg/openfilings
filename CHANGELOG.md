@@ -6,6 +6,39 @@ All notable changes to OpenFilings are documented in this file.
 
 ### Fixed
 
+- Indian PDF filings were understated by seven orders of magnitude. `_scale`
+  recognized billion/million/thousand but not `crore` (10^7) or `lakh`
+  (10^5), which is how essentially every SEBI-regulated annual report states
+  its figures. Because India's XBRL path only covers filings from April 2025
+  onward, the unscaled values landed in the same multi-period series as
+  correctly scaled tagged ones - TCS returned total assets of 143651 for
+  FY2024 next to 1596290000000 for FY2025. The suite's own NSE fixture
+  carries a "(Rs in crore)" header and asserted the unscaled numbers, which
+  is why nothing caught it; those expectations were wrong and are corrected.
+- Equity totals dropped non-controlling interests wherever a statement
+  tagged both `EquityAttributableToOwnersOfParent` and the real
+  `ifrs-full:Equity`. Selection was by document order, and an IFRS balance
+  sheet lists the parent line above the total, so the parent-only figure
+  won and `assets = liabilities + equity` failed by exactly the NCI.
+  Selection now follows the alias table's own priority. Confirmed live on
+  BIM (Turkey), whose equity was understated by 1,817,555 TRY.
+- Company search missed issuers whose registered name uses a letter NFKD
+  cannot decompose - `ø æ œ ł đ ð þ ß ı` are independent letters rather
+  than a base plus a combining mark, so "Orsted" was not a substring of
+  "ørsted a s" once folded. Matching now transliterates them. This is
+  applied only to search comparison, since `normalize_text` also builds
+  KAP's company URLs.
+- Peru's issuer universe was whatever appeared in a single year of SMV's
+  summary dataset, and the registry stopped at the first year returning any
+  rows. Early in a calendar year that is only the issuers who have already
+  filed, so everyone else was unfindable. The registry now merges the two
+  most recent years that carry data.
+- ESEF company search sent the raw query to filings.xbrl.org as a byte-wise
+  SQL `ilike`, so any query missing a diacritic returned nothing at all -
+  "Jeronimo" could never match "JERÓNIMO MARTINS SGPS SA" across all 14
+  ESEF markets. On an empty result it now retries on a short accent-free
+  fragment and ranks the candidates locally, where folding applies.
+
 - The live smoke suite reported `PASS ... not_applicable` for a third of its
   cases, which read as success but proved only that a filing was fetched. The
   balance-sheet identity is skipped whenever one of the three totals is

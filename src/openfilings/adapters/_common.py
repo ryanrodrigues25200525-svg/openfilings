@@ -155,6 +155,33 @@ def slug(value: str) -> str:
     return "_".join(re.findall(r"[a-z0-9]+", normalize_text(value))) or "document"
 
 
+# Latin letters that NFKD does not decompose, because they are independent
+# letters rather than a base plus a combining mark. Without these, a plain
+# ASCII query can never substring-match the registered name: "orsted" is not
+# a substring of "ørsted a s". Applied only when matching a search query -
+# normalize_text itself also feeds slug(), which builds real KAP company
+# URLs, so widening it there would change working document links.
+_MATCH_TRANSLITERATIONS = str.maketrans(
+    {
+        "ø": "o",
+        "æ": "ae",
+        "œ": "oe",
+        "ł": "l",
+        "đ": "d",
+        "ð": "d",
+        "þ": "th",
+        "ß": "ss",
+        "ı": "i",  # noqa: RUF001 - Turkish dotless i, deliberate
+    }
+)
+
+
+def match_text(value: str) -> str:
+    """Fold text for search comparison, including non-decomposable letters."""
+
+    return " ".join(normalize_text(value).translate(_MATCH_TRANSLITERATIONS).split())
+
+
 def utc_midnight(value: date) -> datetime:
     return datetime.combine(value, datetime.min.time(), tzinfo=UTC)
 
@@ -165,12 +192,12 @@ def ranked_matches(
     *,
     limit: int,
 ) -> list[Any]:
-    normalized_query = normalize_text(query)
+    normalized_query = match_text(query)
     if not normalized_query:
         return []
     ranked: list[tuple[int, str, Any]] = []
     for fields, record in records:
-        normalized_fields = tuple(normalize_text(field) for field in fields)
+        normalized_fields = tuple(match_text(field) for field in fields)
         if not any(normalized_query in field for field in normalized_fields):
             continue
         if normalized_query in normalized_fields:

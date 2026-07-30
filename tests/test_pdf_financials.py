@@ -189,6 +189,25 @@ def test_scale_ignores_a_plain_figure_that_contains_three_zeros() -> None:
     assert _scale("Amounts in S/ 000") == Decimal("1000")
 
 
+def test_indian_crore_and_lakh_headers_scale() -> None:
+    """Indian filers report in crore (10^7) or lakh (10^5).
+
+    Without these markers an Indian PDF's figures are understated by seven
+    orders of magnitude, and - because India's XBRL path only covers filings
+    from April 2025 - land in the same multi-period series as correctly
+    scaled tagged values. Confirmed live: TCS's FY2024 annual report gave
+    total assets of 143651 instead of 1436510000000.
+    """
+    from openfilings.xbrl.pdf_statements import _scale
+
+    assert _scale("(₹ in crore)") == Decimal("10000000")
+    assert _scale("Rs. in crores") == Decimal("10000000")
+    assert _scale("Amounts in lakhs") == Decimal("100000")
+    assert _scale("₹ in lacs") == Decimal("100000")
+    # A plain figure must not trip either marker.
+    assert _scale("Total assets 143651 129505") == Decimal("1")
+
+
 def test_pdf_table_scale_is_not_thrown_off_by_a_figure_with_embedded_zeros() -> None:
     markdown = """
     # Estado de flujos de efectivo
@@ -304,7 +323,11 @@ def test_aligned_pdf_text_handles_indian_filing_conventions() -> None:
     (wrong) nearby numbers once the real total is found; and a grand
     total ("Total Equity and Liabilities") that restates total assets and
     must not be read as the equity line item. The heading also sits past
-    the first 12 lines, exercising content-based statement detection."""
+    the first 12 lines, exercising content-based statement detection.
+
+    The fixture's "(Rs in crore)" header must also scale the figures by
+    10^7. This assertion previously expected the unscaled numbers, which
+    locked the missing-crore-marker bug into the suite."""
     financials = extract_pdf_text_financials(
         (_nse_balance_sheet_text(),),
         _filing(period_end=date(2025, 3, 31), source="nse", filing_type="annual"),
@@ -315,9 +338,10 @@ def test_aligned_pdf_text_handles_indian_filing_conventions() -> None:
     balance = financials.balance_sheet()
     assert balance is not None
     codes = {item.code: item.values[0].value for item in balance.line_items}
-    assert codes["current_liabilities"] == Decimal("257935")
-    assert codes["total_equity"] == Decimal("543087")
-    assert codes["total_assets"] == Decimal("1022401")
+    crore = Decimal("10000000")
+    assert codes["current_liabilities"] == Decimal("257935") * crore
+    assert codes["total_equity"] == Decimal("543087") * crore
+    assert codes["total_assets"] == Decimal("1022401") * crore
     assert codes["total_equity"] + codes["total_liabilities"] == codes["total_assets"]
 
 

@@ -1809,6 +1809,15 @@ def _scale(value: str) -> Decimal:
         return Decimal(1_000_000)
     if any(marker in normalized for marker in ("thousand", "milhares", "千元", "仟元")):
         return Decimal(1_000)
+    # Indian filers state amounts in crore (10^7) or lakh (10^5) - "(₹ in
+    # crore)" is the near-universal header on SEBI-regulated annual reports.
+    # Without these, an Indian PDF's figures come out understated by seven
+    # orders of magnitude and, worse, land in the same multi-period series
+    # as correctly scaled tagged-XBRL values from the same issuer.
+    if any(marker in normalized for marker in ("crore", "crores")):
+        return Decimal(10_000_000)
+    if any(marker in normalized for marker in ("lakh", "lakhs", "lacs")):
+        return Decimal(100_000)
     # "000" is only a scale marker as its own token (e.g. "$'000", "S/
     # 000") - _normalize_label strips the surrounding punctuation
     # ("$'000" becomes a standalone "000"), but a plain figure that
