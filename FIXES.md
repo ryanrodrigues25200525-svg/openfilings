@@ -8,7 +8,14 @@ here first.
 Nothing below is speculative. Every entry was reproduced against the live
 source, observed in the code, or measured — this is not a wishlist.
 
-Ordering is by what blocks real use, not by effort.
+Ordering is by what blocks real use, not by effort. P1–P2 change what the
+library can answer; P3–P4 change whether you can trust and find it; P5–P10 are
+the standing engineering backlog — packaging, performance, tests,
+observability, hardening — that keeps the rest from rotting.
+
+Keep it a living document: when a finding turns out to be correct behaviour,
+move it to **Not defects** with the reason rather than deleting it, so the same
+ground is not re-investigated later.
 
 ---
 
@@ -227,6 +234,113 @@ repository, and ships less metadata than a PyPI page needs.
 
 ---
 
+---
+
+## P7 — Performance
+
+Measured, not guessed.
+
+- [ ] **Issuer registries are re-downloaded on every process start.** Eight
+  adapters (`asx`, `bmv`, `cvm`, `dart`, `kap`, `nse`, `sgx`, `smv`) hold the
+  registry in `self._companies`, an instance attribute, so it survives exactly
+  as long as the object. A second CLI invocation still costs a full round trip
+  — measured at ~1.5s for a repeat `openfilings search --source asx`, which
+  re-fetches the entire ASX directory CSV to answer a three-letter query. Peru
+  is worse: its registry now spans two years, so that is four requests per
+  process.
+  *Fix:* persist registries in the `market_state` table that already exists,
+  with a TTL per source. Cuts latency and, more importantly, stops hammering
+  free regulator endpoints for data that changes daily at most.
+
+- [ ] **Thirteen ESEF clients open thirteen connection pools to one host.**
+  Every `EsefMarket` builds its own `EsefClient`, each constructing its own
+  `httpx.AsyncClient`, and all thirteen talk to `filings.xbrl.org`. No
+  connection reuse across markets, thirteen TLS handshakes where one pool
+  would do.
+  *Fix:* share a single injected `AsyncClient` across the ESEF market clients.
+  The constructor already accepts one (`client=`), so this is wiring in
+  `service.py`, not new machinery.
+
+- [ ] **No conditional requests anywhere.** Nothing sends `If-None-Match` or
+  `If-Modified-Since`, and no `ETag` is stored, so every registry fetch
+  transfers the full body even when nothing changed.
+  *Fix:* store the `ETag`/`Last-Modified` alongside the cached registry and
+  revalidate. A `304` costs almost nothing and is the polite way to poll a
+  public dataset.
+
+- [ ] **`source="all"` fans out to every adapter with no concurrency cap.** One
+  search dispatches to 20+ clients simultaneously; combined with jitter-free
+  backoff (P6) a shared hiccup retries them all in lockstep.
+  *Fix:* bound the fan-out with a semaphore and give the gather an overall
+  deadline, so one slow source cannot hold the whole call.
+
+---
+
+## P8 — Tests
+
+- [ ] **No coverage measurement at all.** Neither `pyproject.toml` nor CI
+  mentions `pytest-cov` or `coverage`, so nobody knows which of the 219 tests'
+  paths are exercised — or which adapters are effectively untested.
+  *Fix:* add `pytest-cov`, print a report in CI, and publish the number.
+  Do **not** add a hard threshold gate initially: an arbitrary percentage
+  invites tests written to raise the number rather than to catch defects.
+
+- [ ] **BMV and SMV have no adapter test file.** Mexico and Peru are both in
+  the "statements verified" tier, and both are covered only incidentally
+  through service-level tests. Every other adapter has its own file.
+  *Fix:* add `tests/test_bmv.py` and `tests/test_smv.py` with recorded
+  fixtures, matching the existing per-adapter pattern.
+
+- [ ] **CI runs on `ubuntu-latest` only.** PDF extraction, OCR and font
+  handling are exactly the areas where platform differences show up, and the
+  project is developed on macOS — so the primary development platform is the
+  one CI never exercises.
+  *Fix:* add macOS to the matrix, at least for the Python version already
+  pinned in the smoke job.
+
+- [ ] **No test asserts the README documents every MCP tool.** Ten of
+  twenty-two drifted undocumented before anyone noticed (P4).
+  *Fix:* a test comparing `@mcp.tool()` names against the README list.
+
+- [ ] **No property or fuzz test over number and scale parsing.** This is
+  precisely where the two worst defects lived — the missing `crore`/`lakh`
+  multiplier and the `"000"` marker false-triggering on figures with embedded
+  zeros. Both were single-example bugs in a space that is enumerable.
+  *Fix:* a table-driven test over scale markers × grouping conventions
+  (Western thousands, Indian lakh/crore, European decimal comma), asserting
+  round-trip magnitude. Cheap, and it targets the highest-defect-density code
+  in the repo.
+
+---
+
+## P9 — Observability
+
+- [ ] **The package contains no logging whatsoever.** `import logging` appears
+  zero times across `src/`. For a library whose whole job is network I/O
+  against twenty-odd flaky regulator endpoints, a failure in a scheduled job
+  yields an exception and nothing else — no record of which source was tried,
+  what it returned, or how long it took.
+  *Fix:* stdlib `logging` with a `NullHandler` on the package logger (so the
+  library stays silent by default), debug-level records for each outbound
+  request, retry and cache hit or miss, and a `--verbose` flag on the CLI.
+  This is the single change that makes every other bug on this list cheaper
+  to diagnose.
+
+---
+
+## P10 — Security hardening
+
+- [ ] **`xml.etree.ElementTree.fromstring` parses network data.**
+  `adapters/dart.py` parses the DART corp-code XML with stdlib ElementTree,
+  which Python's own documentation lists as vulnerable to entity-expansion
+  ("billion laughs") and quadratic-blowup denial of service. External entity
+  resolution is not the issue; expansion is.
+  *Fix:* parse with `defusedxml`, or bound the decompressed input and reject
+  documents declaring internal entities. Real-world risk here is low — DART is
+  a keyed government API — so this is hardening, not an incident.
+
+---
+
 ## Not defects
 
 Recorded so they are not "rediscovered" later:
@@ -239,6 +353,10 @@ Recorded so they are not "rediscovered" later:
   correctly distinct — unlike [#12](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/12), which is one LEI twice.
 - **Germany is unavailable.** Blocked upstream: filings.xbrl.org lists German
   filings as unavailable for reliable discovery.
+- **Zip handling is already bounded.** Both `edinet.py` and `bmv_json.py`
+  check member counts *and* decompressed sizes before reading, so archive
+  bombs are guarded. Checked while auditing; recorded so it is not "fixed"
+  a second time.
 - **The hardcoded key in `adapters/sfc.py`.** It is the public client
   identifier the SIMEV frontend ships to every browser, documented as such in
   a comment. Secret scanners will flag it; it is a false positive.
