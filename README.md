@@ -73,7 +73,10 @@ suite does and does not prove.
 
 Tracked openly rather than discovered by you. Every item is a real,
 reproduced finding — most came from probing 42 issuers the test suite never
-touches. Full detail in [issues](https://github.com/ryanrodrigues25200525-svg/openfilings/issues).
+touches. [FIXES.md](FIXES.md) is the full working checklist, with the proposed
+fix beside each item and the research-model gaps that have no issue yet; the
+[issue tracker](https://github.com/ryanrodrigues25200525-svg/openfilings/issues)
+carries the reproductions.
 
 **Correctness**
 
@@ -188,6 +191,7 @@ work, not something the suite does today.
 - [Project description](PROJECT_DESCRIPTION.md)
 - [Architecture](ARCHITECTURE.md)
 - [Changelog](CHANGELOG.md)
+- [Fixes checklist](FIXES.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security policy](SECURITY.md)
 
