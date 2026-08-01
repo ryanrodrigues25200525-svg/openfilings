@@ -302,6 +302,19 @@ the 40-character key immediately, with a 10,000-request daily allowance.
 Register through the [EDINET API registration
 page](https://api.edinet-fsa.go.jp/api/auth/index.aspx?mode=1).
 
+The `pdf-detect` extra (`uv sync --extra pdf-detect`) enables a fast,
+optional pre-extraction PDF classification via
+[pdf-inspector](https://github.com/firecrawl/pdf-inspector). It does not
+replace the PDF-to-Markdown engine — three filings tested head-to-head
+(Unilever, DBS, Keppel) produced identical figures from both engines, and
+the existing table-parsing heuristics do not recognize pdf-inspector's
+markdown dialect. What it adds: skipping a doomed-to-fail native-extraction
+attempt when a PDF is confidently classified as scanned or image-based
+(pure work avoidance — `assess_markdown` already routes those to OCR), and
+flagging broken font encodings as a diagnostic warning the document-level
+text-quality heuristic cannot see on its own. Falls back to today's
+behavior with no code changes when the extra is not installed.
+
 ## CLI
 
 UK-listed company usage works immediately:

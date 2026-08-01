@@ -4,6 +4,23 @@ All notable changes to OpenFilings are documented in this file.
 
 ## Unreleased
 
+### Added
+
+- Added an optional `pdf-detect` extra using
+  [pdf-inspector](https://github.com/firecrawl/pdf-inspector) for
+  pre-extraction PDF classification. Evaluated as a replacement for
+  `pymupdf4llm` and rejected for that role: three filings tested head-to-head
+  (Unilever's 20-F, DBS's and Keppel's annual reports) produced identical
+  figures from both engines, and the existing PDF-table heuristics do not
+  parse pdf-inspector's markdown at all. What shipped instead is narrower and
+  provably non-regressive - skip a doomed-to-fail native-extraction attempt
+  when a PDF is confidently classified scanned/image-based (only when OCR is
+  actually available, so the best-effort fast path is never lost), and
+  surface detected font-encoding issues as a diagnostic warning without
+  forcing OCR, since OCR has no page-subset support and generally degrades
+  table structure relative to correct native extraction. Degrades to
+  identical behavior when the extra is not installed.
+
 ### Fixed
 
 - Indian PDF filings were understated by seven orders of magnitude. `_scale`

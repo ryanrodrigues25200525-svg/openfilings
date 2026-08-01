@@ -232,7 +232,35 @@ repository, and ships less metadata than a PyPI page needs.
   *Fix:* add proportional jitter. Small change, and it matters because these
   are free public regulator endpoints that deserve polite behaviour.
 
----
+- [x] **OCR routing had no pre-extraction signal — evaluated `pdf-inspector`,
+  scoped to what the evidence supports.** A wholesale engine swap was
+  considered and rejected: three filings tested head-to-head (Unilever's
+  20-F, DBS's annual report, Keppel's, chosen because each has a documented
+  or suspected extraction problem) produced **identical figures** from
+  `pdf-inspector` and the current `pymupdf4llm`, and the existing table
+  parser (`xbrl/pdf_statements.py`) does not recognize pdf-inspector's
+  markdown dialect at all — feeding its output in unmodified raises
+  `FinancialsUnavailableError`. Tracing the Unilever bug ([#6](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/6))
+  to its source confirmed the defect is in our own downstream
+  currency-detection heuristic (it picks up "PEN" from an unrelated
+  Peruvian-subsidiary footnote 300 pages later), not in extraction quality —
+  a better engine would not have prevented it.
+  *Shipped instead:* `extraction/pdf_detect.py`, an optional (`pdf-detect`
+  extra) pre-extraction classification wired into `_extract_pdf`. Two uses,
+  both provably non-regressive: (1) skip the native-extraction attempt when
+  a PDF is confidently classified scanned/image-based, since
+  `assess_markdown("")` already scores 0/unusable and routes to OCR
+  regardless — this only removes a doomed-to-fail call, and is disabled
+  whenever OCR itself is unavailable, so the best-effort fast path is never
+  lost; (2) surface `has_encoding_issues` as a diagnostic warning only,
+  deliberately not used to force OCR, since OCR has no page-subset support
+  (`ocr_pdf_to_markdown` OCRs every page) and generally degrades table
+  structure relative to correct native extraction, so forcing a
+  whole-document OCR pass on a partial encoding fault could make a filing
+  worse. Degrades to exactly today's behavior when the extra is not
+  installed. 223 tests pass (4 new), and the full `uv sync --locked
+  --all-extras --dev` / lint / test / build sequence was run locally exactly
+  as CI runs it, with `uv.lock` regenerated for the new optional dependency.
 
 ---
 

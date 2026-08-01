@@ -14,6 +14,7 @@ from openfilings.exceptions import ExtractionError
 from openfilings.extraction.html import html_to_markdown
 from openfilings.extraction.ocr import ocr_pdf_to_markdown, tesseract_available
 from openfilings.extraction.pdf import pdf_to_markdown
+from openfilings.extraction.pdf_detect import PdfClassification, classify_pdf
 from openfilings.extraction.quality import add_quality_warning, assess_markdown
 from openfilings.limits import MAX_TAGGED_DOCUMENT_BYTES
 from openfilings.models import ExtractionQuality, OcrMode
@@ -54,6 +55,7 @@ def extract_document(
     ocr_dpi: int = 200,
     ocr_max_pages: int = 250,
     ocr_executable: str = "tesseract",
+    pdf_classifier: Callable[[bytes], PdfClassification | None] = classify_pdf,
 ) -> ExtractionResult:
     """Extract a document, score it, and route unusable PDFs to optional OCR."""
 
@@ -69,6 +71,7 @@ def extract_document(
             ocr_dpi=ocr_dpi,
             ocr_max_pages=ocr_max_pages,
             ocr_executable=ocr_executable,
+            pdf_classifier=pdf_classifier,
         )
     if media_type in _HTML_TYPES or _looks_like_html(document.data):
         markdown = html_converter(document.data)
@@ -126,20 +129,43 @@ def _extract_pdf(
     ocr_dpi: int,
     ocr_max_pages: int,
     ocr_executable: str,
+    pdf_classifier: Callable[[bytes], PdfClassification | None] = classify_pdf,
 ) -> ExtractionResult:
     if ocr_mode not in {"auto", "never", "always"}:
         raise ExtractionError(f"Unsupported OCR mode: {ocr_mode}.")
 
     page_count = _pdf_page_count(pdf_bytes)
+    available = ocr_available(ocr_executable)
+    classification = pdf_classifier(pdf_bytes)
+
+    # A confident scanned/image-based classification means the fast path would
+    # extract almost no text either way - assess_markdown("") already scores
+    # 0/"unusable" and should_ocr below routes to OCR regardless, so this only
+    # skips a doomed-to-fail pymupdf4llm pass, not a routing decision. Only
+    # skip when OCR would actually run: otherwise the fast attempt is the only
+    # chance at any text at all.
+    skip_fast_path = (
+        ocr_mode == "auto"
+        and available
+        and classification is not None
+        and classification.likely_needs_ocr
+    )
     fast_markdown: str | None = None
     fast_error: ExtractionError | None = None
-    try:
-        fast_markdown = pdf_converter(pdf_bytes)
-    except ExtractionError as exc:
-        fast_error = exc
+    if not skip_fast_path:
+        try:
+            fast_markdown = pdf_converter(pdf_bytes)
+        except ExtractionError as exc:
+            fast_error = exc
 
     fast_quality = assess_markdown(fast_markdown or "", page_count=page_count)
-    available = ocr_available(ocr_executable)
+    if classification is not None and classification.has_encoding_issues:
+        # Diagnostic only - deliberately does not affect should_ocr. OCR has
+        # no page-subset support (ocr_pdf_to_markdown OCRs every page), and
+        # generally degrades table structure relative to correct native
+        # extraction, so a partial font-encoding fault should not force a
+        # whole-document OCR pass on evidence this narrow.
+        fast_quality = add_quality_warning(fast_quality, "pdf_encoding_issues_detected")
     should_ocr = ocr_mode == "always" or (
         ocr_mode == "auto" and fast_quality.status == "unusable" and available
     )
