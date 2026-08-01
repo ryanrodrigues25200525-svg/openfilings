@@ -12,6 +12,7 @@ from typing import Any
 
 import httpx
 
+from openfilings._version import __version__
 from openfilings.adapters._common import RetryingClient, ranked_matches
 from openfilings.adapters.base import SourceDocument
 from openfilings.exceptions import DocumentUnavailableError, SourceError
@@ -66,7 +67,7 @@ class SmvClient(RetryingClient):
             "SMV",
             timeout_seconds=timeout_seconds,
             max_retries=max_retries,
-            headers={"User-Agent": "openfilings/0.20"},
+            headers={"User-Agent": f"openfilings/{__version__}"},
             client=client,
         )
         self._today = today

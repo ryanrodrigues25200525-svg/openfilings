@@ -169,16 +169,18 @@ primary statements' totals and little else.
   mismatch as a cache miss. That makes corrections propagate on their own and
   subsumes the alternatives (a cache-invalidation command, changelog notes).
 
-- [ ] **The README documents 12 of 22 MCP tools.** Undocumented:
+- [x] **The README documented 12 of 22 MCP tools.** Missing:
   `data_quality_report`, `financials_query`, `historical_facts_query`,
   `historical_backfill`, `companies_compare`, `company_research_brief`,
   `filings_diff`, `insider_dealings_list`, `watchlist_check`,
   `filing_sections`. `data_quality_report` is the tool an agent needs to know
   whether to trust a figure, and the fact-series tools are the ones research
   workflows depend on.
-  *Fix:* generate the tool list from `server.py` at docs-build or test time,
-  so it cannot drift again. A test asserting the README lists every
-  `@mcp.tool()` is the cheap version.
+  *Fixed:* documented all 22, grouped by discovery/financials/ownership.
+  Added a test comparing `server.py`'s `@mcp.tool()` names against the
+  README's MCP tools section - the cheap version proposed here, not full
+  doc generation - and verified it actually fails when a tool is removed
+  from the docs, not just that it happens to pass today.
 
 - [ ] **[#13](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/13) Every Dependabot PR fails CI because `uv.lock` is not regenerated.**
   *Fix:* add a lockfile-refresh step so the PRs are testable, or restrict
@@ -194,43 +196,59 @@ primary statements' totals and little else.
 The package cannot currently be installed by anyone who is not cloning the
 repository, and ships less metadata than a PyPI page needs.
 
-- [ ] **No `py.typed` marker.** The public API is fully annotated, but with no
+- [x] **No `py.typed` marker.** The public API is fully annotated, but with no
   marker downstream type checkers ignore all of it.
-  *Fix:* add `src/openfilings/py.typed` and include it in the wheel via
-  `[tool.hatch.build]`.
+  *Fixed:* added `src/openfilings/py.typed`, confirmed present in the actual
+  built wheel (not assumed) via `hatchling`'s default package inclusion.
 
-- [ ] **No `__version__` exported.** Callers cannot introspect the installed
-  version, which also blocks the cache-stamping fix above.
-  *Fix:* expose `__version__` in `__init__.py` from package metadata.
+- [x] **No `__version__` exported.** Callers cannot introspect the installed
+  version, which also blocked the cache-stamping idea in
+  [#15](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/15).
+  *Fixed:* `__version__` resolved from installed package metadata, isolated
+  in a leaf module (`openfilings/_version.py`) with no internal imports of
+  its own, since adapters are imported transitively by the top-level
+  package and importing `openfilings.__version__` directly from an adapter
+  would risk a circular import. As a direct follow-on, ten adapters'
+  hardcoded `User-Agent: openfilings/<version>` strings - which had already
+  drifted (0.2 through 0.21 across different files) - now read the real
+  version at request time.
 
-- [ ] **No PyPI metadata.** `pyproject.toml` has no `classifiers`, no
+- [x] **No PyPI metadata.** `pyproject.toml` had no `classifiers`, no
   `keywords`, no `[project.urls]`, and no license field, so a published page
   would be bare and unsearchable.
-  *Fix:* add classifiers (Python versions, licence, topic), keywords, and
-  URLs for homepage, source and issues.
+  *Fixed:* added classifiers (Python versions, licence, topic), keywords,
+  and URLs for homepage, repository, issues and changelog.
 
-- [ ] **No release has been cut.** Version is pinned at `0.21.0` with a large
-  `Unreleased` changelog and zero git tags, so "latest" is undefined.
-  *Fix:* cut a tagged release once P1/P2 land, and add a release workflow
-  that builds and publishes on tag.
+- [x] **No release had been cut.** Version was pinned at `0.21.0` with a
+  large `Unreleased` changelog and zero git tags.
+  *Fixed:* cut `0.22.0` with a dated changelog section. A release workflow
+  that builds and publishes on tag is still open - not attempted here since
+  it needs a real decision on whether/where to publish (PyPI requires
+  trusted-publisher or token setup this session cannot authorize).
 
 ---
 
 ## P6 — Robustness
 
-- [ ] **The SQLite cache has no schema version.** Tables are created with
-  `CREATE TABLE IF NOT EXISTS` and there is no `user_version` or migration
-  path, so a schema change silently meets an old database.
-  *Fix:* set `PRAGMA user_version`, check it on open, and either migrate or
-  rebuild on mismatch. Pairs directly with the extractor-version stamp in
-  [#15](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/15).
+- [x] **The SQLite cache has no schema version.** Tables were created with
+  `CREATE TABLE IF NOT EXISTS` and there was no `user_version` or migration
+  path, so a schema change would silently meet an old database.
+  *Fixed:* `PRAGMA user_version`, checked on open. A pre-versioning database
+  (SQLite's own default, `0`) is accepted and stamped forward as
+  schema-compatible; a cache from a *newer* version than this build knows
+  raises `ConfigurationError` instead of operating on data it may not
+  understand. No migration engine was built, since no actual incompatible
+  change exists yet to migrate - this is groundwork for the next one, not a
+  framework built ahead of need. Still pairs with the extractor-version
+  stamp in [#15](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/15), which is separate and not done.
 
-- [ ] **Retry backoff has no jitter.** `_common.py` backs off on a fixed
+- [x] **Retry backoff has no jitter.** `_common.py` backed off on a fixed
   `0.25 · 2^n` / `0.5 · 2^n` schedule. A `source="all"` search fans out to
-  every adapter at once, so a shared upstream hiccup retries them all in
+  every adapter at once, so a shared upstream hiccup retried them all in
   lockstep.
-  *Fix:* add proportional jitter. Small change, and it matters because these
-  are free public regulator endpoints that deserve polite behaviour.
+  *Fixed:* proportional (+/-25%) jitter. A server's own `Retry-After` header
+  is deliberately left un-jittered - it is an explicit instruction, not a
+  schedule to randomize.
 
 - [x] **OCR routing had no pre-extraction signal — evaluated `pdf-inspector`,
   scoped to what the evidence supports.** A wholesale engine swap was

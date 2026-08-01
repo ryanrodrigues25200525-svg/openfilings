@@ -13,6 +13,7 @@ from urllib.parse import quote, urljoin, urlparse
 
 import httpx
 
+from openfilings._version import __version__
 from openfilings.adapters._common import bounded_request, normalize_text, ranked_matches
 from openfilings.adapters.base import SourceDocument
 from openfilings.exceptions import DocumentUnavailableError, SourceError
@@ -151,7 +152,7 @@ class EsefClient:
         self._client = client or httpx.AsyncClient(
             follow_redirects=True,
             timeout=httpx.Timeout(timeout_seconds),
-            headers={"User-Agent": "openfilings/0.6"},
+            headers={"User-Agent": f"openfilings/{__version__}"},
         )
 
     async def __aenter__(self) -> EsefClient:

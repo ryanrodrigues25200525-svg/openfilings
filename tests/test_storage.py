@@ -7,7 +7,10 @@ import zlib
 from datetime import date
 from decimal import Decimal
 
+import pytest
+
 from openfilings.adapters.base import SourceDocument
+from openfilings.exceptions import ConfigurationError
 from openfilings.models import (
     ExtractionQuality,
     Filing,
@@ -235,3 +238,53 @@ def test_existing_cache_removes_unsupported_source_records(tmp_path) -> None:
     assert stats.companies == 0
     assert stats.filings == 0
     assert stats.documents == 0
+
+
+def test_fresh_cache_is_stamped_with_the_current_schema_version(tmp_path) -> None:
+    path = tmp_path / "cache.sqlite3"
+    cache = SQLiteCache(path)
+    cache.close()
+
+    connection = sqlite3.connect(path)
+    (version,) = connection.execute("PRAGMA user_version").fetchone()
+    connection.close()
+    assert version == 1
+
+
+def test_a_pre_versioning_database_is_accepted_and_stamped_forward(tmp_path) -> None:
+    """SQLite's own user_version defaults to 0, which is what every database
+    created before schema versioning existed already has. Those are
+    schema-compatible with version 1 by construction, so opening one must
+    succeed and silently stamp it forward - not reject a real user's
+    existing cache."""
+
+    path = tmp_path / "cache.sqlite3"
+    cache = SQLiteCache(path)
+    cache.close()
+
+    connection = sqlite3.connect(path)
+    connection.execute("PRAGMA user_version = 0")
+    connection.commit()
+    connection.close()
+
+    cache = SQLiteCache(path)
+    cache.close()
+
+    connection = sqlite3.connect(path)
+    (version,) = connection.execute("PRAGMA user_version").fetchone()
+    connection.close()
+    assert version == 1
+
+
+def test_a_cache_from_a_newer_schema_version_fails_loudly(tmp_path) -> None:
+    path = tmp_path / "cache.sqlite3"
+    cache = SQLiteCache(path)
+    cache.close()
+
+    connection = sqlite3.connect(path)
+    connection.execute("PRAGMA user_version = 99")
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(ConfigurationError, match="newer version"):
+        SQLiteCache(path)

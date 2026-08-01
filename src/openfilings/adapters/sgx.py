@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
+from openfilings._version import __version__
 from openfilings.adapters._common import bounded_request
 from openfilings.adapters.base import SourceDocument
 from openfilings.exceptions import DocumentUnavailableError, SourceError
@@ -83,7 +84,7 @@ class SgxClient:
             follow_redirects=True,
             timeout=httpx.Timeout(timeout_seconds),
             headers={
-                "User-Agent": "openfilings/0.19",
+                "User-Agent": f"openfilings/{__version__}",
                 "Accept-Language": "en-SG,en;q=0.9",
             },
         )

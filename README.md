@@ -599,18 +599,36 @@ dimensions. The lower-level `OpenFilingsService`, normalized models, and raw
 
 ## MCP tools
 
+Discovery and content:
+
 - `companies_search(query, limit=5, source="all")`
 - `filings_list(company_id, category="accounts", limit=10, source="all", history_days=120)`
-- `disclosures_search(keyword, limit=10, source="all")`
-- `company_facts(company_id, periods=8, source="all", statements=None, detail="standard", max_line_items=40)`
-- `major_holders_list(company_id, limit=25)`
-- `major_holders_search(holder_name, scan_limit=200, limit=25)`
-- `sedar_filing_import(company_id, document_url, title, filing_date, period_end=None, filing_type="annual", category="accounts")`
+- `disclosures_search(keyword, limit=10, source="all")` — full-text, FCA NSM and CVM only
 - `filing_outline(filing_id, limit=100, refresh=False)`
 - `filing_read(filing_id, section, offset=0, max_chars=6000, refresh=False)`
 - `filing_search(filing_id, query, limit=5, snippet_chars=1200)`
-- `filing_financials(filing_id, statements=None, periods=4, detail="standard", max_line_items=40)`
+- `filing_sections(filing_id, query=None, limit=20)` — compatibility alias returning headings only
 - `filing_markdown(filing_id, offset=0, max_chars=12000, refresh=False, ocr_mode=None)`
+- `sedar_filing_import(company_id, document_url, title, filing_date, period_end=None, filing_type="annual", category="accounts")`
+
+Financials:
+
+- `filing_financials(filing_id, statements=None, periods=4, detail="standard", max_line_items=40)`
+- `financials_query(company_id, codes, periods=4, source="all")` — selected facts only, across a company's filing history
+- `company_facts(company_id, periods=8, source="all", statements=None, detail="standard", max_line_items=40)`
+- `data_quality_report(filing_id)` — extraction provenance, confidence, and validation for one filing; check this before trusting a figure
+- `filings_diff(first_filing_id, second_filing_id)` — changed values between two filings
+- `historical_backfill(company_id, source, limit=100)` — download UK/ESEF structured history into local storage
+- `historical_facts_query(company_id, codes=None, view="latest_restated", as_of=None, limit=1000)` — restatement-aware: `as_reported`, `latest_restated`, or `as_of` a date
+- `companies_compare(company_ids, code, source="all")` — one normalized fact across 2–20 UK/ESEF issuers
+- `watchlist_check(company_ids, since, source="all")` — stateless check for filings published since a date
+
+Ownership and research:
+
+- `insider_dealings_list(company_id, limit=25)` — UK MAR director/PDMR/PCA dealings
+- `major_holders_list(company_id, limit=25)`
+- `major_holders_search(holder_name, scan_limit=200, limit=25)`
+- `company_research_brief(company_id, source="all")` — recent filings plus a compact three-period financial profile
 
 The MCP interface uses progressive disclosure. Start with company and filing
 metadata, inspect a filing's outline, then read one section or retrieve short

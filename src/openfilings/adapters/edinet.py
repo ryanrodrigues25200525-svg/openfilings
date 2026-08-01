@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
+from openfilings._version import __version__
 from openfilings.adapters._common import bounded_request
 from openfilings.adapters.base import SourceDocument
 from openfilings.exceptions import (
@@ -81,7 +82,7 @@ class EdinetClient:
         self._client = client or httpx.AsyncClient(
             follow_redirects=True,
             timeout=httpx.Timeout(timeout_seconds),
-            headers={"User-Agent": "openfilings/0.5"},
+            headers={"User-Agent": f"openfilings/{__version__}"},
         )
 
     async def __aenter__(self) -> EdinetClient:

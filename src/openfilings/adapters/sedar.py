@@ -7,6 +7,7 @@ from urllib.parse import urljoin, urlsplit
 
 import httpx
 
+from openfilings._version import __version__
 from openfilings.adapters._common import RetryingClient
 from openfilings.adapters.base import SourceDocument
 from openfilings.exceptions import DocumentUnavailableError, SourceError
@@ -50,7 +51,10 @@ class SedarClient(RetryingClient):
             "TSX/SEDAR+",
             timeout_seconds=timeout_seconds,
             max_retries=max_retries,
-            headers={"User-Agent": "openfilings/0.21", "Referer": TSX_DIRECTORY_URL},
+            headers={
+                "User-Agent": f"openfilings/{__version__}",
+                "Referer": TSX_DIRECTORY_URL,
+            },
             client=client,
         )
 

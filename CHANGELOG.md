@@ -2,9 +2,50 @@
 
 All notable changes to OpenFilings are documented in this file.
 
-## Unreleased
+## 0.22.0 - 2026-08-01
 
 ### Added
+
+- Added a `PRAGMA user_version` schema-version check to the SQLite cache.
+  Tables were created with `CREATE TABLE IF NOT EXISTS` and had no version
+  tracking at all, so a future incompatible schema change would have
+  silently met an old database with no way to detect the mismatch. A
+  pre-versioning database (SQLite's own default, `user_version = 0`) is
+  schema-compatible with version 1 by construction and is accepted and
+  stamped forward; a cache from a *newer* schema version fails loudly with
+  a clear message instead of operating on data it may not understand.
+- Added proportional (+/-25%) jitter to retry backoff. `source="all"` fans
+  out to 20+ adapters at once on a fixed exponential schedule, so a shared
+  upstream hiccup had every client retrying in lockstep - impolite to a
+  free public endpoint and self-defeating, since the retries collide again.
+  A server's own `Retry-After` header is still respected exactly, without
+  jitter, since it is an explicit instruction rather than a schedule to
+  randomize.
+- Added packaging metadata that was entirely absent: a `py.typed` marker
+  (the public API was already fully annotated, but with no marker
+  downstream type checkers ignored all of it - confirmed present in the
+  built wheel), a real `__version__` resolved from installed package
+  metadata, and PyPI classifiers/keywords/`[project.urls]` (license,
+  Python versions, homepage, repository, issues, changelog). The version
+  resolution lives in a new leaf module, `openfilings/_version.py`, with no
+  internal imports of its own, since adapters are imported transitively by
+  the top-level package and cannot import `openfilings.__version__`
+  directly without risking a circular import.
+- Ten adapters sent a hardcoded `User-Agent: openfilings/<version>` that
+  had already drifted out of sync with the package before this release -
+  ASX and SEDAR said 0.21, three said 0.20, and FCA NSM still said 0.2 from
+  years earlier. All ten now read the real `__version__` at request time,
+  so this cannot silently drift again.
+- Fixed MCP tool documentation drift: 10 of 22 `@mcp.tool()`s were
+  undocumented in the README, including `data_quality_report` - the tool an
+  agent needs to decide whether to trust a figure - plus the fact-series
+  tools (`financials_query`, `historical_facts_query`) research workflows
+  depend on. Added a test comparing `server.py`'s tool names against the
+  README's MCP tools section, so a new tool cannot ship silently
+  undocumented again; verified the test actually fails when a tool is
+  removed from the docs, not just that it passes today.
+
+### Added (earlier this cycle)
 
 - Added an optional `pdf-detect` extra using
   [pdf-inspector](https://github.com/firecrawl/pdf-inspector) for

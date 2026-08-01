@@ -13,6 +13,7 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 
+from openfilings._version import __version__
 from openfilings.adapters._common import bounded_request
 from openfilings.adapters.base import SourceDocument
 from openfilings.exceptions import DocumentUnavailableError, SourceError
@@ -43,7 +44,7 @@ class FcaNsmClient:
             follow_redirects=True,
             timeout=httpx.Timeout(timeout_seconds),
             headers={
-                "User-Agent": "openfilings/0.2",
+                "User-Agent": f"openfilings/{__version__}",
                 "Origin": "https://data.fca.org.uk",
             },
         )

@@ -11,6 +11,7 @@ from urllib.parse import parse_qs, urljoin, urlparse
 
 import httpx
 
+from openfilings._version import __version__
 from openfilings.adapters._common import RetryingClient, ranked_matches
 from openfilings.adapters.base import SourceDocument
 from openfilings.exceptions import DocumentUnavailableError, SourceError
@@ -48,7 +49,7 @@ class BmvClient(RetryingClient):
             "BMV",
             timeout_seconds=timeout_seconds,
             max_retries=max_retries,
-            headers={"User-Agent": "openfilings/0.20", "Accept": "*/*"},
+            headers={"User-Agent": f"openfilings/{__version__}", "Accept": "*/*"},
             client=client,
         )
         self._companies: tuple[Company, ...] | None = None

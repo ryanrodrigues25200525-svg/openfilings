@@ -1,5 +1,6 @@
 """OpenFilings: regulator-neutral access to public corporate filings."""
 
+from openfilings._version import __version__
 from openfilings.domain import FilingDocument, Filings, SectionSearchResult
 from openfilings.models import (
     Company,
@@ -35,4 +36,5 @@ __all__ = [
     "OpenFilingsService",
     "PrefetchResult",
     "SectionSearchResult",
+    "__version__",
 ]

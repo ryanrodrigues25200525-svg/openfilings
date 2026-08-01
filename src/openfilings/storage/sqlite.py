@@ -10,6 +10,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 
 from openfilings.adapters.base import SourceDocument
+from openfilings.exceptions import ConfigurationError
 from openfilings.models import (
     SUPPORTED_SOURCE_NAMES,
     CacheStats,
@@ -20,6 +21,17 @@ from openfilings.models import (
     FilingFinancials,
     HistoricalFact,
 )
+
+# Bumped whenever a schema change is not a plain additive column (which the
+# existing PRAGMA table_info + ALTER TABLE checks already handle safely).
+# SQLite's own user_version defaults to 0 for every database, including ones
+# created before this constant existed - those are schema-compatible with
+# version 1 by construction, so 0 is accepted and stamped forward rather
+# than rejected. A future version *greater* than this constant means the
+# cache was written by newer code than is currently running, which this
+# constant cannot know how to read, so that case fails loudly instead of
+# operating on data it may not understand.
+_SCHEMA_VERSION = 1
 
 
 class SQLiteCache:
@@ -32,6 +44,7 @@ class SQLiteCache:
         self._connection.execute("PRAGMA journal_mode=WAL")
         self._connection.execute("PRAGMA foreign_keys=ON")
         self._create_schema()
+        self._check_schema_version()
 
     def __enter__(self) -> SQLiteCache:
         return self
@@ -665,6 +678,18 @@ class SQLiteCache:
                     "ALTER TABLE filing_content ADD COLUMN quality_json TEXT"
                 )
             self._remove_unsupported_source_records()
+
+    def _check_schema_version(self) -> None:
+        (current,) = self._connection.execute("PRAGMA user_version").fetchone()
+        if current > _SCHEMA_VERSION:
+            raise ConfigurationError(
+                f"The cache at {self._path} was written by a newer version of "
+                f"OpenFilings (schema {current}, this build supports "
+                f"{_SCHEMA_VERSION}). Upgrade OpenFilings, or delete the cache "
+                "to rebuild it from scratch."
+            )
+        if current != _SCHEMA_VERSION:
+            self._connection.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
 
     def _remove_unsupported_source_records(self) -> None:
         company_ids = self._unsupported_company_ids()

@@ -7,6 +7,7 @@ from datetime import UTC, date, datetime
 
 import httpx
 
+from openfilings._version import __version__
 from openfilings.adapters._common import RetryingClient
 from openfilings.adapters.base import SourceDocument
 from openfilings.exceptions import DocumentUnavailableError, SourceError
@@ -58,7 +59,7 @@ class SfcClient(RetryingClient):
             timeout_seconds=timeout_seconds,
             max_retries=max_retries,
             headers={
-                "User-Agent": "openfilings/0.20",
+                "User-Agent": f"openfilings/{__version__}",
                 "api-key": _PUBLIC_API_KEY,
                 "Referer": PORTAL_URL,
             },

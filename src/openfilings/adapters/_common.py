@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 import re
 import unicodedata
 from datetime import UTC, date, datetime
@@ -64,6 +65,19 @@ async def bounded_request(
     return response
 
 
+def _jittered(delay: float) -> float:
+    """Add +/-25% proportional jitter to a backoff delay.
+
+    A fixed exponential schedule retries every failing adapter in lockstep -
+    source="all" fans out to 20+ clients at once, so a shared upstream hiccup
+    (a regulator's load balancer briefly rejecting connections) has every
+    client retrying at the exact same instant, which is both impolite to a
+    free public endpoint and self-defeating (the retries collide again).
+    """
+
+    return delay * random.uniform(0.75, 1.25)
+
+
 class RetryingClient:
     """Bounded HTTP wrapper with consistent regulator error handling."""
 
@@ -112,7 +126,7 @@ class RetryingClient:
                     raise SourceError(
                         f"{self._source_label} request failed: {detail}"
                     ) from exc
-                await asyncio.sleep(0.25 * (2**attempt))
+                await asyncio.sleep(_jittered(0.25 * (2**attempt)))
                 continue
             if response.status_code not in {429, 500, 502, 503, 504}:
                 if return_redirects and response.is_redirect:
@@ -135,10 +149,12 @@ class RetryingClient:
             retry_after = response.headers.get("retry-after")
             try:
                 delay = (
-                    min(float(retry_after), 30.0) if retry_after else 0.5 * 2**attempt
+                    min(float(retry_after), 30.0)
+                    if retry_after
+                    else _jittered(0.5 * 2**attempt)
                 )
             except ValueError:
-                delay = 0.5 * 2**attempt
+                delay = _jittered(0.5 * 2**attempt)
             await asyncio.sleep(delay)
         raise AssertionError("retry loop exited unexpectedly")
 
